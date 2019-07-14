@@ -1,5 +1,4 @@
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include "exports.h"
 
 static HMODULE s_realVersionModule = nullptr;
 
@@ -17,9 +16,7 @@ void* FindRealAddress(PCSTR name)
 }
 
 static void* real_VerFindFileA = nullptr;
-DWORD
-APIENTRY
-zzVerFindFileA(
+DWORD APIENTRY zzVerFindFileA(
     _In_                         DWORD uFlags,
     _In_                         LPCSTR szFileName,
     _In_opt_                     LPCSTR szWinDir,
@@ -190,9 +187,7 @@ BOOL APIENTRY zzGetFileVersionInfoExW(_In_ DWORD dwFlags,
 }
 
 static void* real_VerLanguageNameA = nullptr;
-DWORD
-APIENTRY
-zzVerLanguageNameA(
+DWORD APIENTRY zzVerLanguageNameA(
     _In_                  DWORD wLang,
     _Out_writes_(cchLang) LPSTR szLang,
     _In_                  DWORD cchLang
@@ -205,9 +200,7 @@ zzVerLanguageNameA(
 }
 
 static void* real_VerLanguageNameW = nullptr;
-DWORD
-APIENTRY
-zzVerLanguageNameW(
+DWORD APIENTRY zzVerLanguageNameW(
     _In_                  DWORD wLang,
     _Out_writes_(cchLang) LPWSTR szLang,
     _In_                  DWORD cchLang
@@ -220,9 +213,7 @@ zzVerLanguageNameW(
 }
 
 static void* real_VerQueryValueA = nullptr;
-BOOL
-APIENTRY
-zzVerQueryValueA(
+BOOL APIENTRY zzVerQueryValueA(
     _In_ LPCVOID pBlock,
     _In_ LPCSTR lpSubBlock,
     _Outptr_result_buffer_(_Inexpressible_("buffer can be PWSTR or DWORD*")) LPVOID * lplpBuffer,
@@ -236,9 +227,7 @@ zzVerQueryValueA(
 }
 
 static void* real_VerQueryValueW = nullptr;
-BOOL
-APIENTRY
-zzVerQueryValueW(
+BOOL APIENTRY zzVerQueryValueW(
     _In_ LPCVOID pBlock,
     _In_ LPCWSTR lpSubBlock,
     _Outptr_result_buffer_(_Inexpressible_("buffer can be PWSTR or DWORD*")) LPVOID * lplpBuffer,
