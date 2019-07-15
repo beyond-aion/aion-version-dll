@@ -3,7 +3,7 @@ Aion No-IP and Windows 10 camera fix.
 
 Features:
 - Allows the game client to connect to non-official game server IPs (prevents the error message "No game server is available to the authorization server (6)").
-- Fixes the camera movement issue on Windows 10 (introduced by the Fall Creators Update 2017) without needing to run a separate program. This feature is enabled by passing the -win10-mouse-fix command line argument to aion.bin.
+- Fixes the camera movement issue on Windows 10 (introduced by the Fall Creators Update 2017) without needing to run a separate program.
 - Enables all graphics options sliders (shadows, water quality, etc) which are otherwise disabled at high resolutions.
 
 ## Building

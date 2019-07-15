@@ -1,33 +1,38 @@
-#define WIN32_LEAN_AND_MEAN
 #define _HAS_EXCEPTIONS 0
 
-#include <windows.h>
+#include "exports.h"
+#include <list>
 #include <stdio.h>
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include "winsock2.h"
 #include "detours.h"
+using namespace std;
 
 static const char s_officialIp[16] = "70.5.0.18";
-static char s_loginServerIp[16] = "";
-static bool s_needPatch = false;
+static list<char> s_gameServerIps = {};
 static bool s_gfxEnabled = false;
 
-static unsigned long (PASCAL FAR* real_inet_addr)(_In_z_ const char FAR* cp) = inet_addr;
-unsigned long PASCAL FAR zzinet_addr(_In_z_ const char FAR* cp) {
-    s_needPatch = true;
-    if (!strcmp(cp, s_officialIp)) {
-        return real_inet_addr(s_loginServerIp);
+template <typename T>
+bool contains(const list<T>& list, const T& element) {
+    return !list.empty() && find(list.begin(), list.end(), element) != list.end();
+}
+
+static decltype(inet_ntoa)* real_inet_ntoa = inet_ntoa;
+// This hook gathers all game server IPs from the server list (some other calls happen before the server list and also after login when connecting to the chat server, but that's fine)
+char* WINAPI zzinet_ntoa(_In_ struct in_addr in) {
+    char* addr = real_inet_ntoa(in);
+    if (strcmp(addr, "211.233.91.10") != 0) { // ignore this IP (always queried on client start)
+        s_gameServerIps.push_back(*addr);
     }
-    return real_inet_addr(cp);
+    return addr;
 }
 
 static decltype(lstrcpynA)* real_lstrcpynA = lstrcpynA;
+// Instead of here we could also return the fake IP directly in inet_ntoa but then we have to restore it in the winsock2#connect() call.
 LPSTR WINAPI zzlstrcpynA(_Out_writes_(iMaxLength) LPSTR lpString1, _In_ LPCSTR lpString2, _In_ int iMaxLength) {
-    if (s_needPatch) {
-        if (!strcmp(lpString2, s_loginServerIp)) {
-            s_needPatch = false;
-            return real_lstrcpynA(lpString1, s_officialIp, iMaxLength);
-        }
+    if (contains(s_gameServerIps, *lpString2)) {
+        s_gameServerIps.clear();
+        return real_lstrcpynA(lpString1, s_officialIp, iMaxLength);
     }
     return real_lstrcpynA(lpString1, lpString2, iMaxLength);
 }
@@ -104,17 +109,34 @@ LONG WINAPI zzChangeDisplaySettingsA(_In_opt_ DEVMODEA* lpDevMode, _In_ DWORD dw
     return real_ChangeDisplaySettingsA(lpDevMode, dwFlags);
 }
 
+bool IsWindows10FallCreatorsUpdateOrLater() {
+    DWORD dwDummy;
+    DWORD dwFVISize = zzGetFileVersionInfoSizeA("kernel32.dll", &dwDummy);
+    LPBYTE lpVersionInfo = new BYTE[dwFVISize];
+    if (zzGetFileVersionInfoA("kernel32.dll", 0, dwFVISize, lpVersionInfo)) {
+        UINT puLen;
+        LPSTR lplpBuffer;
+        if (zzVerQueryValueA(lpVersionInfo, "\\", (LPVOID*)& lplpBuffer, &puLen) && puLen == sizeof(VS_FIXEDFILEINFO)) {
+            VS_FIXEDFILEINFO* vinfo = (VS_FIXEDFILEINFO*)lplpBuffer;
+            int majorVersion = (int)HIWORD(vinfo->dwProductVersionMS);
+            int minorVersion = (int)LOWORD(vinfo->dwProductVersionMS);
+            int buildNumber = (int)HIWORD(vinfo->dwProductVersionLS);
+            return majorVersion == 10 && minorVersion == 0 && buildNumber >= 16299; // 16299 is update version 1709 (Fall Creators Update) which broke the WM_MOUSEMOVE event when dragging the mouse
+        }
+    }
+    return false;
+}
+
 void InstallPatch() {
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
 
-    // enable client login to non-official game servers
-    if (GetServerIpFromCommandLine(s_loginServerIp, sizeof(s_loginServerIp))) {
-        DetourAttach(&(PVOID&)real_inet_addr, zzinet_addr);
-        DetourAttach(&(PVOID&)real_lstrcpynA, zzlstrcpynA);
-    }
+    // enable client login to non-official game servers by spoofing game server IP as an official one
+    DetourAttach(&(PVOID&)real_inet_ntoa, zzinet_ntoa);
+    DetourAttach(&(PVOID&)real_lstrcpynA, zzlstrcpynA);
 
-    if (strstr(GetCommandLineA(), "-win10-mouse-fix") > 0) {
+    // activate camera movement fix for windows 10
+    if (IsWindows10FallCreatorsUpdateOrLater()) {
         DetourAttach(&(PVOID&)real_SetCursorPos, zzSetCursorPos);
     }
 
