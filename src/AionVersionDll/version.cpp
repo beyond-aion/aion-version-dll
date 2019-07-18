@@ -37,11 +37,18 @@ LPSTR WINAPI zzlstrcpynA(_Out_writes_(iMaxLength) LPSTR lpString1, _In_ LPCSTR l
     return real_lstrcpynA(lpString1, lpString2, iMaxLength);
 }
 
+bool IsCursorHidden() {
+    CURSORINFO cursorInfo = { 0 };
+    cursorInfo.cbSize = sizeof(cursorInfo);
+    GetCursorInfo(&cursorInfo);
+    return cursorInfo.flags == 0;
+}
+
 static decltype(SetCursorPos)* real_SetCursorPos = SetCursorPos;
 BOOL WINAPI zzSetCursorPos(_In_ int X, _In_ int Y) {
     BOOL result = real_SetCursorPos(X, Y);
     HWND hwnd = GetActiveWindow();
-    if (hwnd) {
+    if (hwnd && IsCursorHidden()) {
 
         POINT pt;
         GetCursorPos(&pt);
