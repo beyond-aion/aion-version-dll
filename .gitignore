@@ -5,3 +5,5 @@ src/x64
 src/AionVersionDll/Debug
 src/AionVersionDll/Release
 src/AionVersionDll/x64
+packages/
+!packages/repositories.config
