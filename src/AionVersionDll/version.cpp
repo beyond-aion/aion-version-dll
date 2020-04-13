@@ -11,6 +11,8 @@ using namespace std;
 static const char s_officialIp[16] = "70.5.0.18";
 static list<char> s_gameServerIps = {};
 static bool s_gfxEnabled = false;
+HWND clientHwnd = nullptr;
+bool mouseHookInstalled = false;
 
 template <typename T>
 bool contains(const list<T>& list, const T& element) {
@@ -38,32 +40,74 @@ LPSTR WINAPI zzlstrcpynA(_Out_writes_(iMaxLength) LPSTR lpString1, _In_ LPCSTR l
 }
 
 bool IsCursorHidden() {
-    CURSORINFO cursorInfo = { 0 };
-    cursorInfo.cbSize = sizeof(cursorInfo);
+    CURSORINFO cursorInfo = { sizeof(cursorInfo) };
     GetCursorInfo(&cursorInfo);
     return cursorInfo.flags == 0;
+}
+
+bool IsWindowedMode() {
+    return clientHwnd && (GetWindowLong(clientHwnd, GWL_STYLE) & WS_CAPTION);
+}
+
+WPARAM MakeMouseMoveWParam() {
+    return ((GetKeyState(VK_LBUTTON) & 0x8000) ? 0x0001 : 0) |
+        ((GetKeyState(VK_RBUTTON) & 0x8000) ? 0x0002 : 0) |
+        ((GetKeyState(VK_SHIFT) & 0x8000) ? 0x0004 : 0) |
+        ((GetKeyState(VK_CONTROL) & 0x8000) ? 0x0008 : 0) |
+        ((GetKeyState(VK_MBUTTON) & 0x8000) ? 0x0010 : 0) |
+        ((GetKeyState(VK_XBUTTON1) & 0x8000) ? 0x0020 : 0) |
+        ((GetKeyState(VK_XBUTTON2) & 0x8000) ? 0x0040 : 0);
+}
+
+LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode >= 0) {
+        if (IsWindowedMode()) {
+            if (wParam == WM_MOUSEMOVE && clientHwnd && IsCursorHidden()) {
+                POINT pt = ((MSLLHOOKSTRUCT*)lParam)->pt;
+                ScreenToClient(clientHwnd, &pt);
+                SendMessage(clientHwnd, WM_MOUSEMOVE, MakeMouseMoveWParam(), MAKELPARAM(pt.x, pt.y));
+            }
+        } else {
+            // we need to uninstall the hook in fullscreen mode to not send double WM_MOUSEMOVE events (makes the camera go wild)
+            PostThreadMessage(GetCurrentThreadId(), WM_QUIT, 0, 0);
+        }
+    }
+    return CallNextHookEx(nullptr, nCode, wParam, lParam);
+}
+
+DWORD WINAPI CameraFixThread(LPVOID lParam) {
+    HHOOK hook = SetWindowsHookEx(WH_MOUSE_LL, MouseProc, GetModuleHandle(0), 0);
+    if (hook) {
+        MSG message;
+        while (GetMessage(&message, nullptr, 0, 0) > 0) {
+            TranslateMessage(&message);
+            DispatchMessage(&message);
+        }
+        UnhookWindowsHookEx(hook);
+        mouseHookInstalled = false;
+    }
+    return 0;
 }
 
 static decltype(SetCursorPos)* real_SetCursorPos = SetCursorPos;
 BOOL WINAPI zzSetCursorPos(_In_ int X, _In_ int Y) {
     BOOL result = real_SetCursorPos(X, Y);
-    HWND hwnd = GetActiveWindow();
-    if (hwnd && IsCursorHidden()) {
-
-        POINT pt;
-        GetCursorPos(&pt);
-        ScreenToClient(hwnd, &pt);
-
-        WPARAM wParam =
-            (GetKeyState(VK_LBUTTON) & 0x8000) ? 0x0001 : 0 |
-            (GetKeyState(VK_RBUTTON) & 0x8000) ? 0x0002 : 0 |
-            (GetKeyState(VK_SHIFT) & 0x8000) ? 0x0004 : 0 |
-            (GetKeyState(VK_CONTROL) & 0x8000) ? 0x0008 : 0 |
-            (GetKeyState(VK_MBUTTON) & 0x8000) ? 0x0010 : 0 |
-            (GetKeyState(VK_XBUTTON1) & 0x8000) ? 0x0020 : 0 |
-            (GetKeyState(VK_XBUTTON2) & 0x8000) ? 0x0040 : 0;
-
-        PostMessage(hwnd, WM_MOUSEMOVE, wParam, MAKELPARAM(pt.x, pt.y));
+    if (!clientHwnd) {
+        clientHwnd = GetActiveWindow();
+    }
+    if (clientHwnd && IsCursorHidden()) {
+        if (IsWindowedMode()) {
+            if (!mouseHookInstalled) {
+                mouseHookInstalled = true;
+                // windowed mode needs decoupled processing, otherwise camera movements will stutter while any key on the keyboard is pressed
+                CreateThread(nullptr, 0, CameraFixThread, nullptr, 0, nullptr);
+            }
+        } else {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(clientHwnd, &pt);
+            PostMessage(clientHwnd, WM_MOUSEMOVE, MakeMouseMoveWParam(), MAKELPARAM(pt.x, pt.y));
+        }
     }
     return result;
 }
