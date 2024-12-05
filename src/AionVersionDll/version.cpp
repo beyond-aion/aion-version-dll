@@ -1,6 +1,7 @@
 #define _HAS_EXCEPTIONS 0
 
 #include "exports.h"
+#include <atomic>
 #include <list>
 #include <stdio.h>
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
@@ -12,6 +13,7 @@ static const char s_officialIp[16] = "70.5.0.18";
 static list<char> s_gameServerIps = {};
 static bool s_gfxEnabled = false;
 HWND clientHwnd = nullptr;
+std::atomic<bool> windowedMode(false); // atomic because mouse hook runs in a different thread
 bool mouseHookInstalled = false;
 
 template <typename T>
@@ -45,10 +47,6 @@ bool IsCursorHidden() {
     return cursorInfo.flags == 0;
 }
 
-bool IsWindowedMode() {
-    return clientHwnd && (GetWindowLong(clientHwnd, GWL_STYLE) & WS_CAPTION);
-}
-
 WPARAM MakeMouseMoveWParam() {
     return ((GetKeyState(VK_LBUTTON) & 0x8000) ? 0x0001 : 0) |
         ((GetKeyState(VK_RBUTTON) & 0x8000) ? 0x0002 : 0) |
@@ -61,8 +59,8 @@ WPARAM MakeMouseMoveWParam() {
 
 LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode >= 0) {
-        if (IsWindowedMode()) {
-            if (wParam == WM_MOUSEMOVE && clientHwnd && IsCursorHidden()) {
+        if (windowedMode) {
+            if (wParam == WM_MOUSEMOVE && IsCursorHidden()) {
                 POINT pt = ((MSLLHOOKSTRUCT*)lParam)->pt;
                 ScreenToClient(clientHwnd, &pt);
                 SendMessage(clientHwnd, WM_MOUSEMOVE, MakeMouseMoveWParam(), MAKELPARAM(pt.x, pt.y));
@@ -92,11 +90,8 @@ DWORD WINAPI CameraFixThread(LPVOID lParam) {
 static decltype(SetCursorPos)* real_SetCursorPos = SetCursorPos;
 BOOL WINAPI zzSetCursorPos(_In_ int X, _In_ int Y) {
     BOOL result = real_SetCursorPos(X, Y);
-    if (!clientHwnd) {
-        clientHwnd = GetActiveWindow();
-    }
     if (clientHwnd && IsCursorHidden()) {
-        if (IsWindowedMode()) {
+        if (windowedMode) {
             if (!mouseHookInstalled) {
                 mouseHookInstalled = true;
                 // windowed mode needs decoupled processing, otherwise camera movements will stutter while any key on the keyboard is pressed
@@ -151,13 +146,15 @@ void EnableHighQualityGraphicsOptions() {
     VirtualProtect(mbi.BaseAddress, mbi.RegionSize, oldProtect, &oldProtect);
 }
 
-static decltype(ChangeDisplaySettingsA)* real_ChangeDisplaySettingsA = ChangeDisplaySettingsA;
-LONG WINAPI zzChangeDisplaySettingsA(_In_opt_ DEVMODEA* lpDevMode, _In_ DWORD dwFlags) {
+static decltype(SetWindowLongA)* real_SetWindowLongA = SetWindowLongA;
+LONG WINAPI zzSetWindowLongA(_In_ HWND hWnd, _In_ int nIndex, _In_ LONG dwNewLong) {
     if (!s_gfxEnabled) {
         EnableHighQualityGraphicsOptions();
         s_gfxEnabled = true;
     }
-    return real_ChangeDisplaySettingsA(lpDevMode, dwFlags);
+    clientHwnd = hWnd;
+    windowedMode = dwNewLong & WS_CAPTION;
+    return real_SetWindowLongA(hWnd, nIndex, dwNewLong);
 }
 
 bool IsWindows10FallCreatorsUpdateOrLater() {
@@ -191,8 +188,8 @@ void InstallPatch() {
         DetourAttach(&(PVOID&)real_SetCursorPos, zzSetCursorPos);
     }
 
-    // enable disabled graphics settings on high resolutions
-    DetourAttach(&(PVOID&)real_ChangeDisplaySettingsA, zzChangeDisplaySettingsA);
+    // update window info and enable disabled graphics settings on high resolutions
+    DetourAttach(&(PVOID&)real_SetWindowLongA, zzSetWindowLongA);
 
     LONG error = DetourTransactionCommit();
 }
