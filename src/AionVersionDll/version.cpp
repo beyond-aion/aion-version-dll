@@ -409,6 +409,17 @@ void InstallPatch() {
     }
 #endif
 
+	//Affinity fix
+	SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    if (info.dwNumberOfProcessors >= 32) {
+        int maxcpu = info.dwNumberOfProcessors;
+        if (maxcpu > 64)
+            maxcpu = 64;
+        uint64_t mask = ((uint64_t)1 << (maxcpu - 1)) - 1;
+        SetProcessAffinityMask(GetCurrentProcess(), (DWORD_PTR) & mask);
+    }
+
     LONG error = DetourTransactionCommit();
 }
 
