@@ -34,3 +34,4 @@ d3d9.samplerAnisotropy = 16
 # Compatibility / shader fixes
 d3d9.forceSamplerTypeSpecConstants = true
 ```
+You can check the DXVK documentation for more info about all possible config values.
