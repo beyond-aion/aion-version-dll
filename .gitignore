@@ -2,6 +2,8 @@ src/.vs
 src/Debug
 src/Release
 src/x64
+src/AionVersionDll/*.aps
+src/AionVersionDll/*.vcxproj.user
 src/AionVersionDll/Debug
 src/AionVersionDll/Release
 src/AionVersionDll/x64
