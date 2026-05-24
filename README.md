@@ -18,7 +18,11 @@ DXVK can be tweaked via an optional config file. See below for recommended setti
 ## ⚙️ Recommended DXVK Configuration (optional)
 Create a file named `dxvk.conf` in the **game root directory** (NOT `bin32/bin64`):
 ```ini
-dxvk.hud = fps
+# Enable FPS counter (different from the one the game client provides)
+# dxvk.hud = fps
+
+# Allow exclusive full-screen mode
+dxvk.allowFse = True
 
 # Performance
 d3d9.cachedDynamicBuffers = true
@@ -29,7 +33,4 @@ d3d9.samplerAnisotropy = 16
 
 # Compatibility / shader fixes
 d3d9.forceSamplerTypeSpecConstants = true
-
-# Optional (only for legacy engines with broken VRAM detection)
-# d3d9.maxAvailableMemory = 4096
 ```
