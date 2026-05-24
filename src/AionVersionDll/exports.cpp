@@ -29,7 +29,7 @@ DWORD APIENTRY zzVerFindFileA(
     if (!real_VerFindFileA) {
         real_VerFindFileA = FindRealAddress("VerFindFileA");
     }
-    return ((decltype(*::VerFindFileA)*)real_VerFindFileA)
+    return ((decltype(&::VerFindFileA))real_VerFindFileA)
         (uFlags, szFileName, szWinDir, szAppDir, szCurDir, puCurDirLen, szDestDir, puDestDirLen);
 }
 
@@ -47,7 +47,7 @@ DWORD APIENTRY zzVerFindFileW(
     if (!real_VerFindFileW) {
         real_VerFindFileW = FindRealAddress("VerFindFileW");
     }
-    return ((decltype(*::VerFindFileW)*)real_VerFindFileW)
+    return ((decltype(&::VerFindFileW))real_VerFindFileW)
         (uFlags, szFileName, szWinDir, szAppDir, szCurDir, puCurDirLen, szDestDir, puDestDirLen);
 }
 
@@ -65,7 +65,7 @@ DWORD APIENTRY zzVerInstallFileA(
     if (!real_VerInstallFileA) {
         real_VerInstallFileA = FindRealAddress("VerInstallFileA");
     }
-    return ((decltype(*::VerInstallFileA)*)real_VerInstallFileA)
+    return ((decltype(&::VerInstallFileA))real_VerInstallFileA)
         (uFlags, szSrcFileName, szDestFileName, szSrcDir, szDestDir, szCurDir, szTmpFile, puTmpFileLen);
 }
 
@@ -83,7 +83,7 @@ DWORD APIENTRY zzVerInstallFileW(
     if (!real_VerInstallFileW) {
         real_VerInstallFileW = FindRealAddress("VerInstallFileW");
     }
-    return ((decltype(*::VerInstallFileW)*)real_VerInstallFileW)
+    return ((decltype(&::VerInstallFileW))real_VerInstallFileW)
         (uFlags, szSrcFileName, szDestFileName, szSrcDir, szDestDir, szCurDir, szTmpFile, puTmpFileLen);
 }
 
@@ -95,7 +95,7 @@ DWORD APIENTRY zzGetFileVersionInfoSizeA(
     if (!real_GetFileVersionInfoSizeA) {
         real_GetFileVersionInfoSizeA = FindRealAddress("GetFileVersionInfoSizeA");
     }
-    return ((decltype(*::GetFileVersionInfoSizeA)*)real_GetFileVersionInfoSizeA)
+    return ((decltype(&::GetFileVersionInfoSizeA))real_GetFileVersionInfoSizeA)
         (lptstrFilename, lpdwHandle);
 }
 
@@ -107,7 +107,7 @@ DWORD APIENTRY zzGetFileVersionInfoSizeW(
     if (!real_GetFileVersionInfoSizeW) {
         real_GetFileVersionInfoSizeW = FindRealAddress("GetFileVersionInfoSizeW");
     }
-    return ((decltype(*::GetFileVersionInfoSizeW)*)real_GetFileVersionInfoSizeW)
+    return ((decltype(&::GetFileVersionInfoSizeW))real_GetFileVersionInfoSizeW)
         (lptstrFilename, lpdwHandle);
 }
 
@@ -121,7 +121,7 @@ BOOL APIENTRY zzGetFileVersionInfoA(
     if (!real_GetFileVersionInfoA) {
         real_GetFileVersionInfoA = FindRealAddress("GetFileVersionInfoA");
     }
-    return ((decltype(*::GetFileVersionInfoA)*)real_GetFileVersionInfoA)
+    return ((decltype(&::GetFileVersionInfoA))real_GetFileVersionInfoA)
         (lptstrFilename, dwHandle, dwLen, lpData);
 }
 
@@ -135,7 +135,7 @@ BOOL APIENTRY zzGetFileVersionInfoW(
     if (!real_GetFileVersionInfoW) {
         real_GetFileVersionInfoW = FindRealAddress("GetFileVersionInfoW");
     }
-    return ((decltype(*::GetFileVersionInfoW)*)real_GetFileVersionInfoW)
+    return ((decltype(&::GetFileVersionInfoW))real_GetFileVersionInfoW)
         (lptstrFilename, dwHandle, dwLen, lpData);
 }
 
@@ -144,7 +144,7 @@ DWORD APIENTRY zzGetFileVersionInfoSizeExA(_In_ DWORD dwFlags, _In_ LPCSTR lpwst
     if (!real_GetFileVersionInfoSizeExA) {
         real_GetFileVersionInfoSizeExA = FindRealAddress("GetFileVersionInfoSizeExA");
     }
-    return ((decltype(*::GetFileVersionInfoSizeExA)*)real_GetFileVersionInfoSizeExA)
+    return ((decltype(&::GetFileVersionInfoSizeExA))real_GetFileVersionInfoSizeExA)
         (dwFlags, lpwstrFilename, lpdwHandle);
 }
 
@@ -154,7 +154,7 @@ DWORD APIENTRY zzGetFileVersionInfoSizeExW(_In_ DWORD dwFlags, _In_ LPCWSTR lpws
     if (!real_GetFileVersionInfoSizeExW) {
         real_GetFileVersionInfoSizeExW = FindRealAddress("GetFileVersionInfoSizeExW");
     }
-    return ((decltype(*::GetFileVersionInfoSizeExW)*)real_GetFileVersionInfoSizeExW)
+    return ((decltype(&::GetFileVersionInfoSizeExW))real_GetFileVersionInfoSizeExW)
         (dwFlags, lpwstrFilename, lpdwHandle);
 }
 
@@ -168,7 +168,7 @@ BOOL APIENTRY zzGetFileVersionInfoExA(_In_ DWORD dwFlags,
     if (!real_GetFileVersionInfoExA) {
         real_GetFileVersionInfoExA = FindRealAddress("GetFileVersionInfoExA");
     }
-    return ((decltype(*::GetFileVersionInfoExA)*)real_GetFileVersionInfoExA)
+    return ((decltype(&::GetFileVersionInfoExA))real_GetFileVersionInfoExA)
         (dwFlags, lpwstrFilename, dwHandle, dwLen, lpData);
 }
 
@@ -182,7 +182,7 @@ BOOL APIENTRY zzGetFileVersionInfoExW(_In_ DWORD dwFlags,
     if (!real_GetFileVersionInfoExW) {
         real_GetFileVersionInfoExW = FindRealAddress("GetFileVersionInfoExW");
     }
-    return ((decltype(*::GetFileVersionInfoExW)*)real_GetFileVersionInfoExW)
+    return ((decltype(&::GetFileVersionInfoExW))real_GetFileVersionInfoExW)
         (dwFlags, lpwstrFilename, dwHandle, dwLen, lpData);
 }
 
@@ -195,7 +195,7 @@ DWORD APIENTRY zzVerLanguageNameA(
     if (!real_VerLanguageNameA) {
         real_VerLanguageNameA = FindRealAddress("VerLanguageNameA");
     }
-    return ((decltype(*::VerLanguageNameA)*)real_VerLanguageNameA)
+    return ((decltype(&::VerLanguageNameA))real_VerLanguageNameA)
         (wLang, szLang, cchLang);
 }
 
@@ -208,7 +208,7 @@ DWORD APIENTRY zzVerLanguageNameW(
     if (!real_VerLanguageNameW) {
         real_VerLanguageNameW = FindRealAddress("VerLanguageNameW");
     }
-    return ((decltype(*::VerLanguageNameW)*)real_VerLanguageNameW)
+    return ((decltype(&::VerLanguageNameW))real_VerLanguageNameW)
         (wLang, szLang, cchLang);
 }
 
@@ -222,7 +222,7 @@ BOOL APIENTRY zzVerQueryValueA(
     if (!real_VerQueryValueA) {
         real_VerQueryValueA = FindRealAddress("VerQueryValueA");
     }
-    return ((decltype(*::VerQueryValueA)*)real_VerQueryValueA)
+    return ((decltype(&::VerQueryValueA))real_VerQueryValueA)
         (pBlock, lpSubBlock, lplpBuffer, puLen);
 }
 
@@ -236,6 +236,6 @@ BOOL APIENTRY zzVerQueryValueW(
     if (!real_VerQueryValueW) {
         real_VerQueryValueW = FindRealAddress("VerQueryValueW");
     }
-    return ((decltype(*::VerQueryValueW)*)real_VerQueryValueW)
+    return ((decltype(&::VerQueryValueW))real_VerQueryValueW)
         (pBlock, lpSubBlock, lplpBuffer, puLen);
 }
