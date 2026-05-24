@@ -1,9 +1,10 @@
 # Aion-Version-Dll
-Aion No-IP and Windows 10/11 camera fix.
+Aion No-IP and Windows 10/11 fix.
 
 Features:
 - Allows the game client to connect to non-official game server IPs (prevents the error message "No game server is available to the authorization server (6)").
 - Fixes the camera movement issue on Windows 10/11 (introduced by the Fall Creators Update 2017).
+- Fixes an issue with launching the 64-bit client on Windows 11 24H2 and later versions.
 - Enables all graphics options sliders (shadows, water quality, etc) which are otherwise disabled at high resolutions.
 - [DXVK support](https://github.com/doitsujin/dxvk)
 

@@ -158,22 +158,30 @@ LONG WINAPI zzSetWindowLongA(_In_ HWND hWnd, _In_ int nIndex, _In_ LONG dwNewLon
     return real_SetWindowLongA(hWnd, nIndex, dwNewLong);
 }
 
-bool IsWindows10FallCreatorsUpdateOrLater() {
+bool IsWindowsVersionOrLater(int major, int minor, int build) {
     DWORD dwDummy;
     DWORD dwFVISize = zzGetFileVersionInfoSizeA("kernel32.dll", &dwDummy);
     LPBYTE lpVersionInfo = new BYTE[dwFVISize];
     if (zzGetFileVersionInfoA("kernel32.dll", 0, dwFVISize, lpVersionInfo)) {
         UINT puLen;
         LPSTR lplpBuffer;
-        if (zzVerQueryValueA(lpVersionInfo, "\\", (LPVOID*)& lplpBuffer, &puLen) && puLen == sizeof(VS_FIXEDFILEINFO)) {
+        if (zzVerQueryValueA(lpVersionInfo, "\\", (LPVOID*)&lplpBuffer, &puLen) && puLen == sizeof(VS_FIXEDFILEINFO)) {
             VS_FIXEDFILEINFO* vinfo = (VS_FIXEDFILEINFO*)lplpBuffer;
             int majorVersion = (int)HIWORD(vinfo->dwProductVersionMS);
             int minorVersion = (int)LOWORD(vinfo->dwProductVersionMS);
             int buildNumber = (int)HIWORD(vinfo->dwProductVersionLS);
-            return majorVersion == 10 && minorVersion == 0 && buildNumber >= 16299; // 16299 is update version 1709 (Fall Creators Update) which broke the WM_MOUSEMOVE event when dragging the mouse
+            return majorVersion > major || majorVersion == major && (minorVersion > minor || minorVersion == minor && buildNumber >= build);
         }
     }
     return false;
+}
+
+bool IsWindows10FallCreatorsUpdateOrLater() {
+    return IsWindowsVersionOrLater(10, 0, 16299); // update version 1709 (Fall Creators Update) broke the WM_MOUSEMOVE event when dragging the mouse
+}
+
+bool IsWindows1124H2UpdateOrLater() {
+    return IsWindowsVersionOrLater(10, 0, 26100);
 }
 
 void PreloadDXVK() {
@@ -371,7 +379,7 @@ void InstallPatch() {
     DetourAttach(&(PVOID&)real_inet_ntoa, zzinet_ntoa);
     DetourAttach(&(PVOID&)real_lstrcpynA, zzlstrcpynA);
 
-    // activate camera movement fix for windows 10
+    // activate camera movement fix for windows 10+
     if (IsWindows10FallCreatorsUpdateOrLater()) {
         DetourAttach(&(PVOID&)real_SetCursorPos, zzSetCursorPos);
     }
@@ -380,7 +388,7 @@ void InstallPatch() {
     DetourAttach(&(PVOID&)real_SetWindowLongA, zzSetWindowLongA);
 
 #if defined(_M_AMD64)
-    if (strstr(GetCommandLineA(), "-fix-stack-win11") != NULL) {
+    if (IsWindows1124H2UpdateOrLater()) {
         /* fix stack on call CloseHandle */
         DetourAttach(&(PVOID&)real_CloseHandle, zzCloseHandle);
 
