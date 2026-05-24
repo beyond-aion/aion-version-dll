@@ -175,8 +175,7 @@ bool IsWindows10FallCreatorsUpdateOrLater() {
     return false;
 }
 
-void PreloadDXVK()
-{
+void PreloadDXVK() {
     if (GetModuleHandleW(L"d3d9.dll"))
         return;
     LoadLibraryW(L"d3d9.dll");
