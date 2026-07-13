@@ -8,17 +8,16 @@
 #include <winsock2.h>
 #include <winternl.h>
 #include "detours.h"
-using namespace std;
 
 static const char s_officialIp[16] = "70.5.0.18";
-static list<char> s_gameServerIps = {};
+static std::list<char> s_gameServerIps = {};
 static bool s_gfxEnabled = false;
 HWND clientHwnd = nullptr;
 std::atomic<bool> windowedMode(false); // atomic because mouse hook runs in a different thread
 bool mouseHookInstalled = false;
 
 template <typename T>
-bool contains(const list<T>& list, const T& element) {
+bool contains(const std::list<T>& list, const T& element) {
     return !list.empty() && find(list.begin(), list.end(), element) != list.end();
 }
 
@@ -413,11 +412,9 @@ void InstallPatch() {
 	SYSTEM_INFO info;
     GetSystemInfo(&info);
     if (info.dwNumberOfProcessors >= 32) {
-        int maxcpu = info.dwNumberOfProcessors;
-        if (maxcpu > 64)
-            maxcpu = 64;
-        uint64_t mask = ((uint64_t)1 << (maxcpu - 1)) - 1;
-        SetProcessAffinityMask(GetCurrentProcess(), (DWORD_PTR) & mask);
+        int maxCpu = min(64, info.dwNumberOfProcessors);
+        uint64_t mask = ((uint64_t)1 << maxCpu - 1) - 1;
+        SetProcessAffinityMask(GetCurrentProcess(), (DWORD_PTR) mask);
     }
 
     LONG error = DetourTransactionCommit();
@@ -425,6 +422,7 @@ void InstallPatch() {
 
 BOOL WINAPI DllMain(_In_ HINSTANCE hinstDLL, _In_ DWORD fdwReason, _In_ LPVOID lpvReserved) {
     if (fdwReason == DLL_PROCESS_ATTACH) {
+        DisableThreadLibraryCalls(hinstDLL);
         InstallPatch();
     }
     return TRUE;

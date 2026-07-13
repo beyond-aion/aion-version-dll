@@ -5,15 +5,16 @@ Features:
 - Allows the game client to connect to non-official game server IPs (prevents the error message "No game server is available to the authorization server (6)").
 - Fixes the camera movement issue on Windows 10/11 (introduced by the Fall Creators Update 2017).
 - Fixes an issue with launching the 64-bit client on Windows 11 24H2 and later versions.
+- Fixes an issue with launching the game client on systems with 32 or more logical processors.
 - Enables all graphics options sliders (shadows, water quality, etc) which are otherwise disabled at high resolutions.
-- [DXVK support](https://github.com/doitsujin/dxvk)
+- [DXVK support](https://github.com/doitsujin/dxvk) - DXVK can improve performance and frame times, as well as fixing the black flickering that occurs when using the game's "High Quality" graphics engine on Nvidia graphics cards.
 
 ## Building
 This project depends on [MS Detours](https://github.com/Microsoft/Detours). Since it's served via NuGet, you should be able to build the project straight away.
 
 ## Installation
 1. Copy each `version.dll` to the respective `bin32` or `bin64` folder within the game root directory.
-2. **Optional:** If you want to use DXVK, copy `d3d9.dll` from the [latest DXVK release](https://github.com/doitsujin/dxvk/releases) to the same folders.  
+2. **Optional:** If you want to use DXVK, copy `d3d9.dll` from the [latest DXVK release](https://github.com/doitsujin/dxvk/releases) to the same folders and make sure you're using the latest graphics driver. If your graphics card is incompatible because it is too old, you can try the [latest DXVK-Sarek release](https://github.com/pythonlover02/DXVK-Sarek/releases/latest) instead.  
 DXVK can be tweaked via an optional config file. See below for recommended settings.
 
 ## ⚙️ Recommended DXVK Configuration (optional)
