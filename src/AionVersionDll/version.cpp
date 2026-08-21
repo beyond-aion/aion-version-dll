@@ -45,6 +45,7 @@ static void EnableHighQualityGraphicsOptions() {
 
 void InstallOrUpdateCameraFix(HWND hWnd);
 void InstallIpFix();
+void InstallShaderFix();
 void Install64BitStackFix();
 
 static decltype(SetWindowLongA)* real_SetWindowLongA = SetWindowLongA;
@@ -84,6 +85,7 @@ static void InstallPatch() {
     DetourUpdateThread(GetCurrentThread());
     InstallIpFix();
     InstallGraphicsOptionsFixAndCameraFix();
+    InstallShaderFix();
 #if defined(_M_AMD64)
     Install64BitStackFix();
 #endif

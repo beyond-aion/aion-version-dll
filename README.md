@@ -6,8 +6,9 @@ Features:
 - Fixes the camera movement issue on Windows 10/11 (introduced by the Fall Creators Update 2017).
 - Fixes an issue with launching the 64-bit client on Windows 11 24H2 and later versions.
 - Fixes an issue with launching the game client on systems with 32 or more logical processors.
+- Fixes black flickering that occurs when using the game's High Quality graphics engine on Nvidia graphics cards and similar issues on AMD cards when using DXVK on Windows.
 - Enables all graphics options sliders (shadows, water quality, etc) which are otherwise disabled at high resolutions.
-- [DXVK support](https://github.com/doitsujin/dxvk) - DXVK can improve performance and frame times, as well as fixing the black flickering that occurs when using the game's "High Quality" graphics engine on Nvidia graphics cards.
+- [DXVK support](https://github.com/doitsujin/dxvk) - DXVK can improve performance and frame times.
 
 ## Building
 This project depends on [MS Detours](https://github.com/Microsoft/Detours). Since it's served via NuGet, you should be able to build the project straight away.

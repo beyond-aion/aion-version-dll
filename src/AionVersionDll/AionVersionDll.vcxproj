@@ -204,6 +204,7 @@
     <ClCompile Include="camera_fix.cpp" />
     <ClCompile Include="exports.cpp" />
     <ClCompile Include="ip_fix.cpp" />
+    <ClCompile Include="shader_fix.cpp" />
     <ClCompile Include="stack_fix_x64.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
