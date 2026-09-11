@@ -6,19 +6,25 @@
 
 static bool cursorHidden = false;
 static bool insertMessage = false;
+static int insertMessageCount = 0;
 static MSG hiddenMouseMoveMsg = { nullptr, WM_MOUSEMOVE };
 static DWORD fixCoordsExpirationTime = 0;
 static POINT lastVisibleCursorPos = {};
 static POINT hiddenCursorPos = {};
 
 
+static bool IsRightLeftOrMiddleMouseButtonDown();
 static decltype(SetCursor)* real_SetCursor = SetCursor;
 static HCURSOR WINAPI zzSetCursor(_In_opt_ HCURSOR hCursor) {
-    if (!cursorHidden && !hCursor) {
+    if (!cursorHidden && !hCursor && IsRightLeftOrMiddleMouseButtonDown()) {
         fixCoordsExpirationTime = GetTickCount() + 200;
         GetCursorPos(&lastVisibleCursorPos);
+        insertMessageCount = 0;
+        cursorHidden = true;
+    } else if (cursorHidden && hCursor) {
+        cursorHidden = false;
+        SetCursorPos(lastVisibleCursorPos.x, lastVisibleCursorPos.y);
     }
-    cursorHidden = !hCursor;
     return real_SetCursor(hCursor);
 }
 
@@ -56,6 +62,11 @@ static void FixCoords(LPMSG lpMsg);
 static decltype(PeekMessageA)* real_PeekMessageA = PeekMessageA;
 static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UINT wMsgFilterMin, _In_ UINT wMsgFilterMax, _In_ UINT wRemoveMsg) {
     if (insertMessage) {
+        if (insertMessageCount++ == 0) {
+            // drop queued messages when starting to move the camera, as they are often relative to the last visible cursor position instead of the hidden position
+            while (real_PeekMessageA(lpMsg, hWnd, WM_MOUSEMOVE, WM_MOUSEMOVE, PM_REMOVE)) {
+            }
+        }
         *lpMsg = hiddenMouseMoveMsg;
         insertMessage = false;
         return TRUE;
@@ -70,6 +81,10 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
     return result;
 }
 
+static bool IsRightLeftOrMiddleMouseButtonDown() {
+    return (GetKeyState(VK_LBUTTON) & 0x8000) != 0 || (GetKeyState(VK_RBUTTON) & 0x8000) != 0 || (GetKeyState(VK_MBUTTON) & 0x8000) != 0;
+}
+
 static WPARAM MakeMouseMoveWParam() {
     return ((GetKeyState(VK_LBUTTON) & 0x8000) ? MK_LBUTTON : 0) |
         ((GetKeyState(VK_RBUTTON) & 0x8000) ? MK_RBUTTON : 0) |
@@ -80,22 +95,28 @@ static WPARAM MakeMouseMoveWParam() {
         ((GetKeyState(VK_XBUTTON2) & 0x8000) ? MK_XBUTTON2 : 0);
 }
 
-/// For the first few frames after the cursor is hidden, the client may randomly send movement relative to the last visible cursor position rather than the SetCursorPos position.
+/// For the first few frames after the cursor is hidden, the client may randomly receive movement relative to the last visible cursor position rather than the SetCursorPos position.
 /// This function detects this and translates the coordinates relative to the hidden cursor position to prevent initial camera jumps.
 static void FixCoords(LPMSG lpMsg) {
+    bool hiddenNearLastVisiblePos = abs(lastVisibleCursorPos.x - hiddenMouseMoveMsg.pt.x) <= 100 && abs(lastVisibleCursorPos.y - hiddenMouseMoveMsg.pt.y) <= 100;
+	// return if the cursor was hidden near the last visible cursor position, as the detection is unreliable in this case and false positives can cause jumping or inverted camera movement
+    if (hiddenNearLastVisiblePos) {
+        return;
+    }
     long lastVisibleCursorPosDistX = lastVisibleCursorPos.x - lpMsg->pt.x;
     long lastVisibleCursorPosDistY = lastVisibleCursorPos.y - lpMsg->pt.y;
     long lastVisibleCursorPosDistSum = abs(lastVisibleCursorPosDistX) + abs(lastVisibleCursorPosDistY);
     long hiddenCursorPosDistX = hiddenMouseMoveMsg.pt.x - lpMsg->pt.x;
     long hiddenCursorPosDistY = hiddenMouseMoveMsg.pt.y - lpMsg->pt.y;
     long hiddenCursorPosDistSum = abs(hiddenCursorPosDistX) + abs(hiddenCursorPosDistY);
-    if (lastVisibleCursorPosDistSum < hiddenCursorPosDistSum) {
-        long cursorPosLParamX = GET_X_LPARAM(hiddenMouseMoveMsg.lParam);
-        long cursorPosLParamY = GET_Y_LPARAM(hiddenMouseMoveMsg.lParam);
-        lpMsg->lParam = MAKELPARAM(cursorPosLParamX + lastVisibleCursorPosDistX, cursorPosLParamY + lastVisibleCursorPosDistY);
-        lpMsg->pt.x = hiddenMouseMoveMsg.pt.x + lastVisibleCursorPosDistX;
-        lpMsg->pt.y = hiddenMouseMoveMsg.pt.y + lastVisibleCursorPosDistY;
+    if (lastVisibleCursorPosDistSum >= hiddenCursorPosDistSum) {
+        return;
     }
+    long cursorPosLParamX = GET_X_LPARAM(hiddenMouseMoveMsg.lParam);
+    long cursorPosLParamY = GET_Y_LPARAM(hiddenMouseMoveMsg.lParam);
+    lpMsg->lParam = MAKELPARAM(cursorPosLParamX + lastVisibleCursorPosDistX, cursorPosLParamY + lastVisibleCursorPosDistY);
+    lpMsg->pt.x = hiddenMouseMoveMsg.pt.x + lastVisibleCursorPosDistX;
+    lpMsg->pt.y = hiddenMouseMoveMsg.pt.y + lastVisibleCursorPosDistY;
 }
 
 static bool IsWindowsVersionOrLater(int major, int minor, int build) {
