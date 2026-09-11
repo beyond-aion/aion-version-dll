@@ -24,17 +24,17 @@ Create a file named `dxvk.conf` in the **game root directory** (NOT `bin32/bin64
 # Enable FPS counter (different from the one the game client provides)
 # dxvk.hud = fps
 
-# Allow exclusive full-screen mode
+# Allow exclusive full-screen mode (set to False if you encounter problems such as a missing cursor)
 dxvk.allowFse = True
 
 # Performance
-d3d9.cachedDynamicBuffers = true
-d3d9.deferSurfaceCreation = true
+d3d9.cachedDynamicBuffers = True
+d3d9.deferSurfaceCreation = True
 
 # Quality
 d3d9.samplerAnisotropy = 16
 
 # Compatibility / shader fixes
-d3d9.forceSamplerTypeSpecConstants = true
+d3d9.forceSamplerTypeSpecConstants = True
 ```
 You can check the DXVK documentation for more info about all possible config values.
