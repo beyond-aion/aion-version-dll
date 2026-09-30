@@ -1,6 +1,9 @@
 #include "exports.h"
 #include <stdio.h>
 #include "detours.h"
+#if defined(_M_AMD64)
+#include "mods.h"
+#endif
 
 static bool s_gfxEnabled = false;
 
@@ -45,6 +48,7 @@ static void EnableHighQualityGraphicsOptions() {
 
 void InstallOrUpdateCameraFix(HWND hWnd);
 void InstallIpFix();
+void InstallXigncodeFix();
 void InstallShaderFix();
 void Install64BitStackFix();
 
@@ -78,18 +82,23 @@ static void FixClientStartupWithHighCoreCountCpus() {
     }
 }
 
-static void InstallPatch() {
+static void InstallPatch(HINSTANCE self) {
     PreloadDXVK();
 
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
     InstallIpFix();
+    InstallXigncodeFix();
     InstallGraphicsOptionsFixAndCameraFix();
     InstallShaderFix();
 #if defined(_M_AMD64)
     Install64BitStackFix();
+    InstallMods(self);
 #endif
-    DetourTransactionCommit();
+    LONG error = DetourTransactionCommit();
+#if defined(_M_AMD64)
+    ModsLog("startup hooks committed: %ld", error);
+#endif
 
     FixClientStartupWithHighCoreCountCpus();
 }
@@ -97,7 +106,7 @@ static void InstallPatch() {
 BOOL WINAPI DllMain(_In_ HINSTANCE hinstDLL, _In_ DWORD fdwReason, _In_ LPVOID lpvReserved) {
     if (fdwReason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hinstDLL);
-        InstallPatch();
+        InstallPatch(hinstDLL);
     }
     return TRUE;
 }
