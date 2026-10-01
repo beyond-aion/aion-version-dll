@@ -191,22 +191,21 @@ struct Setting {
 
 static const Setting SETTINGS[] = {
     { L"General", L"Log", Setting::Bool, &g_modsConfig.log, 1 },
-    { L"ChatTime", L"Enabled", Setting::Bool, &g_modsConfig.chatTime, 1 },
-    { L"AntiAfk", L"Enabled", Setting::Bool, &g_modsConfig.antiAfk, 1 },
-    { L"AntiAfk", L"NoSessionTimeout", Setting::Bool, &g_modsConfig.noSessionTimeout, 1 },
-    { L"Ping", L"Enabled", Setting::Bool, &g_modsConfig.ping, 1 },
+    { L"ChatTime", L"Enabled", Setting::Bool, &g_modsConfig.chatTime, 0 },
+    { L"AntiAfk", L"Enabled", Setting::Bool, &g_modsConfig.antiAfk, 0 },
+    { L"AntiAfk", L"NoSessionTimeout", Setting::Bool, &g_modsConfig.noSessionTimeout, 0 },
+    { L"Ping", L"Enabled", Setting::Bool, &g_modsConfig.ping, 0 },
     { L"Ping", L"Interval", Setting::Int, &g_modsConfig.pingInterval, 3000, 1000, 60000 },
     // the start of the base line, one line below the frame rate of the DXVK HUD
     { L"Ping", L"X", Setting::Int, &g_modsConfig.pingX, 8, 0, 16384 },
     { L"Ping", L"Y", Setting::Int, &g_modsConfig.pingY, 48, 0, 16384 },
     { L"Ping", L"Scale", Setting::Float, &g_modsConfig.pingScale, 1, 0.25f, 4 },
-    { L"Macros", L"Enabled", Setting::Bool, &g_modsConfig.macros, 1 },
     // the limit is a signed byte immediate in the client
-    { L"Macros", L"Limit", Setting::Int, &g_modsConfig.macroLimit, 30, 12, 127 },
-    { L"Stats", L"Enabled", Setting::Bool, &g_modsConfig.statPrecision, 1 },
-    { L"QuestTargets", L"Enabled", Setting::Bool, &g_modsConfig.questTargets, 1 },
-    { L"UiScale", L"Max", Setting::Int, &g_modsConfig.uiScaleMax, 225, 130, 400 },
-    { L"UiScale", L"LargeGlyphFrom", Setting::Int, &g_modsConfig.largeGlyphFrom, 24, 8, 64 },
+    { L"Macros", L"Limit", Setting::Int, &g_modsConfig.macroLimit, 0, 0, 127 },
+    { L"Stats", L"Enabled", Setting::Bool, &g_modsConfig.statPrecision, 0 },
+    { L"QuestTargets", L"Enabled", Setting::Bool, &g_modsConfig.questTargets, 0 },
+    { L"UiScale", L"Max", Setting::Int, &g_modsConfig.uiScaleMax, 130, 130, 400 },
+    { L"UiScale", L"LargeGlyphFrom", Setting::Int, &g_modsConfig.largeGlyphFrom, 33, 8, 64 },
 };
 
 static void Apply(const Setting& setting, float value) {
@@ -333,7 +332,7 @@ static void InstallGameMods(HMODULE game) {
         if (g_modsConfig.ping) {
             InstallPing(game);
         }
-        if (g_modsConfig.macros) {
+        if (g_modsConfig.macroLimit) {
             InstallMacroLimit(game);
         }
         if (g_modsConfig.statPrecision) {
@@ -424,8 +423,8 @@ void InstallMods(HINSTANCE self) {
     for (const std::string& problem : s_configProblems) {
         ModsLog("mods.ini: %s", problem.c_str());
     }
-    ModsLog("mods: chatTime=%d antiAfk=%d noSessionTimeout=%d ping=%d macros=%d stats=%d", g_modsConfig.chatTime, g_modsConfig.antiAfk,
-        g_modsConfig.noSessionTimeout, g_modsConfig.ping, g_modsConfig.macros, g_modsConfig.statPrecision);
+    ModsLog("mods: chatTime=%d antiAfk=%d noSessionTimeout=%d ping=%d macroLimit=%d stats=%d", g_modsConfig.chatTime, g_modsConfig.antiAfk,
+        g_modsConfig.noSessionTimeout, g_modsConfig.ping, g_modsConfig.macroLimit, g_modsConfig.statPrecision);
 
     real_LdrLoadDll = (LdrLoadDll_t)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "LdrLoadDll");
     if (real_LdrLoadDll) {

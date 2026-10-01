@@ -3,6 +3,8 @@
 
 // The UI scale option is a percentage from 70 on, the slider covers the range above that.
 static constexpr int MIN_PERCENT = 70;
+// fonts taller than 32 pixels get the larger glyph cells
+static constexpr int CLIENT_LARGE_GLYPH_FROM = 33;
 
 static void Patch(BYTE* at, const void* value, size_t size) {
     DWORD oldProtect;
@@ -16,6 +18,9 @@ static void Patch(BYTE* at, const void* value, size_t size) {
 /// Glyphs are rendered into atlas cells of 32 pixels, or 64 for fonts taller than 32 pixels. With the UI scaled up, fonts
 /// just below that limit get their descenders cut off by the cell, so the larger cells start at a lower height.
 void InstallGlyphCells(HMODULE cryFont) {
+    if (g_modsConfig.largeGlyphFrom == CLIENT_LARGE_GLYPH_FROM) {
+        return;
+    }
     // cmp dword ptr [r14+tmHeight], 32; jle; mov dword ptr [r14+largeCells], 1
     BYTE* p = FindPattern(cryFont, "41 83 7E ?? 20 7E ?? 41 C7 86 ?? ?? 00 00 01 00 00 00");
     if (!p) {

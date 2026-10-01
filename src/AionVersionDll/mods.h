@@ -15,7 +15,6 @@ struct ModsConfig {
     int pingX;
     int pingY;
     float pingScale;
-    bool macros;
     int macroLimit;
     bool statPrecision;
     bool questTargets;
