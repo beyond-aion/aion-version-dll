@@ -137,19 +137,17 @@ static void __fastcall zzSetQuestMarker(BYTE* npc, int questId, int state, int k
         return;
     }
     void* effects = *(void**)(npc + s_effectsOffset);
-    if (!effects || !s_findEffect(effects, g_modsConfig.glowEffect)) {
+    if (!effects || !s_findEffect(effects, QUEST_TARGET_EFFECT)) {
         return;
     }
-    if (strcmp(g_modsConfig.glowEffect, QUEST_TARGET_EFFECT) == 0) {
-        TurnTargetPoint(effects);
-    }
+    TurnTargetPoint(effects);
     const char** slot = s_markerEffects + BORROWED_STATE;
     if (!*slot) {
         // the table is filled on the first marker shown
         real_SetQuestMarker(npc, questId, BORROWED_STATE, 0);
     }
     const char* marker = *slot;
-    *slot = g_modsConfig.glowEffect;
+    *slot = QUEST_TARGET_EFFECT;
     real_SetQuestMarker(npc, questId, BORROWED_STATE, 0);
     *slot = marker;
     int* markerState = (int*)(npc + MARKER_STATE_OFFSET);

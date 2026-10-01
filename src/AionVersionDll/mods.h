@@ -4,8 +4,6 @@
 #include <windows.h>
 #include <vector>
 
-static constexpr int TEXT_SETTING_LENGTH = 64;
-
 /// Settings from mods.ini next to version.dll. Missing keys fall back to the defaults in mods.cpp.
 struct ModsConfig {
     bool log;
@@ -21,7 +19,6 @@ struct ModsConfig {
     int macroLimit;
     bool statPrecision;
     bool questTargets;
-    char glowEffect[64];
     int uiScaleMax; // percent
     int largeGlyphFrom; // pixel height
 };

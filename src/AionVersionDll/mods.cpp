@@ -182,12 +182,11 @@ bool IsInWorld() {
 struct Setting {
     const wchar_t* section;
     const wchar_t* key;
-    enum { Bool, Int, Float, Text } type;
+    enum { Bool, Int, Float } type;
     void* target;
     float defaultValue;
     float min;
     float max;
-    const char* defaultText;
 };
 
 static const Setting SETTINGS[] = {
@@ -206,7 +205,6 @@ static const Setting SETTINGS[] = {
     { L"Macros", L"Limit", Setting::Int, &g_modsConfig.macroLimit, 30, 12, 127 },
     { L"Stats", L"Enabled", Setting::Bool, &g_modsConfig.statPrecision, 1 },
     { L"QuestTargets", L"Enabled", Setting::Bool, &g_modsConfig.questTargets, 1 },
-    { L"QuestTargets", L"GlowEffect", Setting::Text, g_modsConfig.glowEffect, 0, 0, 0, "sys_UIfx.Quest.target" },
     { L"UiScale", L"Max", Setting::Int, &g_modsConfig.uiScaleMax, 225, 130, 400 },
     { L"UiScale", L"LargeGlyphFrom", Setting::Int, &g_modsConfig.largeGlyphFrom, 24, 8, 64 },
 };
@@ -234,15 +232,6 @@ static void ConfigProblem(const wchar_t* format, ...) {
 
 /// Reads one value, reporting values that are not a number, not 0/1 for switches, or out of range.
 static void Read(const Setting& setting) {
-    if (setting.type == Setting::Text) {
-        char* target = (char*)setting.target;
-        wchar_t text[TEXT_SETTING_LENGTH];
-        GetPrivateProfileStringW(setting.section, setting.key, L"", text, _countof(text), g_modsIniPath);
-        if (!*text || !WideCharToMultiByte(CP_UTF8, 0, text, -1, target, TEXT_SETTING_LENGTH, nullptr, nullptr)) {
-            strcpy_s(target, TEXT_SETTING_LENGTH, setting.defaultText);
-        }
-        return;
-    }
     Apply(setting, setting.defaultValue);
     wchar_t text[64];
     GetPrivateProfileStringW(setting.section, setting.key, L"", text, _countof(text), g_modsIniPath);
