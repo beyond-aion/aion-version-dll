@@ -18,29 +18,17 @@ static ChatAddMessage_t real_ChatAddMessage = nullptr;
 static ChatLogWrite_t real_ChatLogWrite = nullptr;
 static FilterChatText_t real_FilterChatText = nullptr;
 
-static thread_local wchar_t s_prefix[160];
+static thread_local wchar_t s_prefix[64];
 static thread_local size_t s_prefixLength = 0;
 // the channel message waiting for the filter, which would mangle the markup of the time if it came before
 static thread_local bool s_prefixPending = false;
-// older clients take at most 5 characters of text in a color tag, so the time is split over several tags there
-static bool s_shortColorText = false;
-static constexpr int SHORT_COLOR_TEXT = 5;
 
 /// Grey time in brackets, the way later clients show it.
 static void MakePrefix() {
     SYSTEMTIME t;
     GetLocalTime(&t);
-    wchar_t time[16];
-    int timeLength = swprintf_s(time, L"(%02d:%02d:%02d)", t.wHour, t.wMinute, t.wSecond);
-    int chunk = s_shortColorText ? SHORT_COLOR_TEXT : timeLength;
-    s_prefixLength = 0;
-    for (int i = 0; i < timeLength; i += chunk) {
-        int length = swprintf_s(s_prefix + s_prefixLength, _countof(s_prefix) - s_prefixLength, L"[color:%.*s;0.678 0.678 0.678]",
-            min(chunk, timeLength - i), time + i);
-        s_prefixLength += length > 0 ? length : 0;
-    }
-    s_prefix[s_prefixLength++] = L' ';
-    s_prefix[s_prefixLength] = 0;
+    int length = swprintf_s(s_prefix, L"[color:(%02d:%02d:%02d);0.678 0.678 0.678] ", t.wHour, t.wMinute, t.wSecond);
+    s_prefixLength = length > 0 ? length : 0;
 }
 
 static __int64 __fastcall zzChatAddMessage(void* chat, int type, const wchar_t* text) {
@@ -114,6 +102,20 @@ static FilterChatText_t FindChatFilter(BYTE* addMessage) {
     return nullptr;
 }
 
+/// Older clients (4.6) cut the text of a color tag to the length of the tag name "color:" minus one, so 5 characters; later
+/// ones take 127. The limit is set up before the copy loop as lea r9d, [r12-1] with r12 the name length (6), and turned into
+/// lea r9d, [r12+79h] = 127.
+static void FixColorTextLength(HMODULE game) {
+    BYTE* p = FindPattern(game, "45 8D 4C 24 FF 48 89 B4 24 ?? ?? ?? ?? 48 8D 74 7B 02 33 FF 45 85 C9 8B D7 8B DF 7E ?? 4C 8B C5 48 8B CE "
+                                "4C 2B C6 0F B7 01 66 85 C0 74 ?? 66 3D 3B 00 74 ?? 66 3D 5D 00");
+    if (!p) {
+        return;
+    }
+    BYTE displacement = 0x79;
+    PatchMemory(p + 4, &displacement, 1);
+    ModsLog("chat time: color text length fixed at %p", p);
+}
+
 void InstallChatTime(HMODULE game) {
     // 5.x clients can show the time themselves, set per chat tab
     static const wchar_t BUILT_IN_TIME[] = L"[color:(%s);%f %f %f] %s";
@@ -121,14 +123,12 @@ void InstallChatTime(HMODULE game) {
         ModsLog("chat time: the client has its own");
         return;
     }
-    // the quest target effect came with the clients that fixed the text length of color tags
-    static const char QUEST_TARGET_EFFECT[] = "sys_UIfx.Quest.target";
-    s_shortColorText = !FindBytes(game, QUEST_TARGET_EFFECT, sizeof(QUEST_TARGET_EFFECT));
+    FixColorTextLength(game);
     // the message entry point also shows GM alerts on screen, the log writer formats the Chat.log lines
     real_ChatAddMessage = (ChatAddMessage_t)FunctionUsing(game, "v3_system_gm_alert");
     real_ChatLogWrite = (ChatLogWrite_t)FunctionUsing(game, "%.4d.%.2d.%.2d %.2d:%.2d:%.2d : %s \n");
     real_FilterChatText = real_ChatAddMessage ? FindChatFilter((BYTE*)real_ChatAddMessage) : nullptr;
-    ModsLog("chat time: add=%p log=%p filter=%p short color text=%d", real_ChatAddMessage, real_ChatLogWrite, real_FilterChatText, s_shortColorText);
+    ModsLog("chat time: add=%p log=%p filter=%p", real_ChatAddMessage, real_ChatLogWrite, real_FilterChatText);
     if (!real_ChatAddMessage) {
         return;
     }
