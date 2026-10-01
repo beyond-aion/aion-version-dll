@@ -34,10 +34,8 @@ static int WINAPI zzMessageBoxW(_In_opt_ HWND hWnd, _In_opt_ LPCWSTR lpText, _In
     return real_MessageBoxW(hWnd, lpText, lpCaption, uType);
 }
 
-/// Lets 5.x clients start without xigncode when launched with -disable-xigncode
+/// Lets 5.x clients start without xigncode
 void InstallXigncodeFix() {
-    if (strstr(GetCommandLineA(), "-disable-xigncode")) {
-        DetourAttach(&(PVOID&)real_LoadLibraryW, zzLoadLibraryW);
-        DetourAttach(&(PVOID&)real_MessageBoxW, zzMessageBoxW);
-    }
+    DetourAttach(&(PVOID&)real_LoadLibraryW, zzLoadLibraryW);
+    DetourAttach(&(PVOID&)real_MessageBoxW, zzMessageBoxW);
 }
