@@ -69,6 +69,7 @@ bool IsInWorld();
 
 void InstallMods(HINSTANCE self);
 void InstallChatTime(HMODULE game);
+void InstallColorTagFix(HMODULE game);
 void InstallTimeouts(HMODULE game);
 void InstallPing(HMODULE game);
 void InstallMacroLimit(HMODULE game);

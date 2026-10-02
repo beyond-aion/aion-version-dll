@@ -208,6 +208,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="camera_fix.cpp" />
+    <ClCompile Include="color_tag_fix.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="exports.cpp" />
     <ClCompile Include="ip_fix.cpp" />
     <ClCompile Include="mods.cpp">

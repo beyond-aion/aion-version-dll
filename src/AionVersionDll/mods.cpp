@@ -325,6 +325,7 @@ static void InstallGameMods(HMODULE game) {
         ModsLog("Game.dll at %p, game state at %p", game, g_gameState);
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
+        InstallColorTagFix(game);
         if (g_modsConfig.chatTime) {
             InstallChatTime(game);
         }
