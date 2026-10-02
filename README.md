@@ -6,9 +6,9 @@ Features:
 - Fixes the camera movement issue on Windows 10/11 (introduced by the Fall Creators Update 2017).
 - Fixes an issue with launching the 64-bit client on Windows 11 24H2 and later versions.
 - Fixes an issue with launching the game client on systems with 32 or more logical processors.
+- Fixes the `XignCode Error` when launching v5.x+ game clients (disables XignCode entirely).
 - Fixes black flickering that occurs when using the game's High Quality graphics engine on Nvidia graphics cards and similar issues on AMD cards when using DXVK on Windows.
 - Enables all graphics options sliders (shadows, water quality, etc) which are otherwise disabled at high resolutions.
-- Starts 5.x clients without XIGNCODE.
 - Fixes color tags in 64-bit 4.6 clients, which showed only the first 5 characters of their text.
 - [DXVK support](https://github.com/doitsujin/dxvk) - DXVK can improve performance and frame times.
 
