@@ -212,6 +212,7 @@ static const Setting SETTINGS[] = {
     { L"Buffs", L"OwnColumns", Setting::Int, &g_modsConfig.ownBuffColumns, 0, 0, 64 },
     { L"Stats", L"Enabled", Setting::Bool, &g_modsConfig.statPrecision, 0 },
     { L"QuestTargets", L"Enabled", Setting::Bool, &g_modsConfig.questTargets, 0 },
+    { L"MultiClient", L"Enabled", Setting::Bool, &g_modsConfig.multiClient, 0 },
     { L"UiScale", L"Max", Setting::Int, &g_modsConfig.uiScaleMax, 130, 130, 400 },
     { L"UiScale", L"LargeGlyphFrom", Setting::Int, &g_modsConfig.largeGlyphFrom, 33, 8, 64 },
 };
@@ -318,6 +319,9 @@ static void InstallGameMods(HMODULE game) {
     }
     if (g_modsConfig.uiScaleMax > 130) {
         InstallUiScale(game);
+    }
+    if (g_modsConfig.multiClient) {
+        InstallMultiClient(game);
     }
     bool uiXml = InstallUiXml(game);
     if (buffs) {

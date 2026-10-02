@@ -21,6 +21,7 @@ struct ModsConfig {
     int ownBuffColumns;
     bool statPrecision;
     bool questTargets;
+    bool multiClient;
     int uiScaleMax; // percent
     int largeGlyphFrom; // pixel height
 };
@@ -105,6 +106,7 @@ void AddUiXmlEdit(const wchar_t* dialogName, void (*apply)(XmlNode& dialog));
 void InstallStatPrecision(HMODULE game);
 void InstallQuestTargets(HMODULE game);
 void InstallUiScale(HMODULE game);
+void InstallMultiClient(HMODULE game);
 void InstallGlyphCells(HMODULE cryFont);
 void InstallOverlay();
 /// Hooks the device methods again when something else wrote over them; called once a frame.

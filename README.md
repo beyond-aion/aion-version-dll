@@ -22,6 +22,7 @@ Optional additions to the game client, all of them off until turned on in `mods.
 - **Buffs:** the own buff and debuff windows and the buff window of the target show up to 64 buffs and 64 debuffs each, in all client versions, laid out in as many columns as `OwnColumns` and `TargetColumns` say. Without the mod they show 24 buffs and 24 debuffs in 4.x, 40 buffs and 24 debuffs in 5.x. The game server decides how many effects a character has; retail servers allow 16 buffs and 20 debuffs.
 - **Stats:** attack, casting and movement speed in the character window with as many decimals as they have (up to three).
 - **Quest targets (4.6, 4.8):** monsters a quest in progress needs (to kill or to loot) get the icon of the quest kind in front of their name, the same one the quest window shows, as 5.x clients do by themselves, and on 4.6 gatherable objects it needs get the green glow later clients show. The client's own quest monster data decides which ones.
+- **Multi client:** more than two clients at once. Without it, a third client closes the other two when it starts.
 - **UI scale (5.x):** the UI scale option goes past 130 %, up to the screen size relative to 1280x960 (225 % on 3840x2160), and large fonts no longer lose the tails of letters like g and y.
 
 The mods find their places in the client by content rather than by fixed addresses, so they work with different client versions (4.6, 4.8 and 5.8 have been verified). A mod that finds nothing to change simply stays off, which `mods.log` next to `version.dll` shows, together with any problems in `mods.ini`.
