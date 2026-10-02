@@ -18,6 +18,7 @@ struct ModsConfig {
     int macroLimit;
     bool statPrecision;
     bool questTargets;
+    bool multiClient;
     int uiScaleMax; // percent
     int largeGlyphFrom; // pixel height
 };
@@ -76,6 +77,7 @@ void InstallMacroLimit(HMODULE game);
 void InstallStatPrecision(HMODULE game);
 void InstallQuestTargets(HMODULE game);
 void InstallUiScale(HMODULE game);
+void InstallMultiClient(HMODULE game);
 void InstallGlyphCells(HMODULE cryFont);
 void InstallOverlay();
 

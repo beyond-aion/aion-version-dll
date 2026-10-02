@@ -204,6 +204,7 @@ static const Setting SETTINGS[] = {
     { L"Macros", L"Limit", Setting::Int, &g_modsConfig.macroLimit, 0, 0, 127 },
     { L"Stats", L"Enabled", Setting::Bool, &g_modsConfig.statPrecision, 0 },
     { L"QuestTargets", L"Enabled", Setting::Bool, &g_modsConfig.questTargets, 0 },
+    { L"MultiClient", L"Enabled", Setting::Bool, &g_modsConfig.multiClient, 0 },
     { L"UiScale", L"Max", Setting::Int, &g_modsConfig.uiScaleMax, 130, 130, 400 },
     { L"UiScale", L"LargeGlyphFrom", Setting::Int, &g_modsConfig.largeGlyphFrom, 33, 8, 64 },
 };
@@ -343,6 +344,9 @@ static void InstallGameMods(HMODULE game) {
             InstallQuestTargets(game);
         }
         InstallUiScale(game);
+        if (g_modsConfig.multiClient) {
+            InstallMultiClient(game);
+        }
         LONG error = DetourTransactionCommit();
         ModsLog("game hooks committed: %ld", error);
         s_gameModsInstalled = 1;

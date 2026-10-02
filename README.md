@@ -20,6 +20,7 @@ Optional additions to the game client, all of them off until turned on in `mods.
 - **Macros:** more macros than the client allows (12 in 4.x, 24 in 5.x), as many as `Limit` says. The game server has to accept the higher macro slots too.
 - **Stats:** attack, casting and movement speed in the character window with as many decimals as they have (up to three).
 - **Quest targets (4.6, 4.8):** monsters a quest in progress needs (to kill or to loot) get the icon of the quest kind in front of their name, the same one the quest window shows, as 5.x clients do by themselves, and on 4.6 gatherable objects it needs get the green glow later clients show. The client's own quest monster data decides which ones.
+- **Multi client:** more than two clients at once. Without it, a third client closes the other two when it starts.
 - **UI scale (5.x):** the UI scale option goes past 130 %, up to the screen size relative to 1280x960 (225 % on 3840x2160), and large fonts no longer lose the tails of letters like g and y.
 
 The mods find their places in the client by content rather than by fixed addresses, so they work with different client versions (4.6, 4.8 and 5.8 have been verified). A mod that finds nothing to change simply stays off, which `mods.log` next to `version.dll` shows, together with any problems in `mods.ini`.
