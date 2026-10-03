@@ -5,6 +5,7 @@
 #include <shlwapi.h>
 #include <string>
 #include <vector>
+#include <intrin.h>
 #include "detours.h"
 
 ModsConfig g_modsConfig = {};
@@ -314,8 +315,38 @@ static void InstallGameMods(HMODULE game) {
 
 static PVOID s_ldrCookie = nullptr;
 
-/// Game.dll unpacks itself while it loads, so its code is ready once the load notification arrives.
-static volatile LONG s_cryFontPatched = 0;
+typedef BOOL(WINAPI* DllEntry_t)(HINSTANCE instance, DWORD reason, LPVOID reserved);
+static DllEntry_t real_GameEntry = nullptr;
+
+static BOOL WINAPI zzGameEntry(HINSTANCE instance, DWORD reason, LPVOID reserved) {
+    BOOL result = real_GameEntry(instance, reason, reserved);
+    if (reason == DLL_PROCESS_ATTACH && result) {
+        InstallGameMods((HMODULE)instance);
+    }
+    return result;
+}
+
+/// Some clients pack Game.dll and unpack it in its entry point, which runs after the load notification. Points the loader's
+/// entry for the module at a wrapper, so that the mods are installed once the entry point has returned.
+static bool WrapGameEntry(HMODULE game) {
+    // PEB->Ldr->InLoadOrderModuleList; each entry starts with its links, DllBase at +30h and EntryPoint at +38h
+    BYTE* peb = (BYTE*)__readgsqword(0x60);
+    LIST_ENTRY* head = (LIST_ENTRY*)(*(BYTE**)(peb + 0x18) + 0x10);
+    for (LIST_ENTRY* link = head->Flink; link != head; link = link->Flink) {
+        BYTE* entry = (BYTE*)link;
+        if (*(HMODULE*)(entry + 0x30) != game) {
+            continue;
+        }
+        PVOID* entryPoint = (PVOID*)(entry + 0x38);
+        if (!*entryPoint) {
+            return false;
+        }
+        real_GameEntry = (DllEntry_t)*entryPoint;
+        *entryPoint = (PVOID)zzGameEntry;
+        return true;
+    }
+    return false;
+}
 
 typedef struct _UNICODE_STRING {
     USHORT Length;
@@ -353,7 +384,10 @@ static VOID NTAPI LdrDllNotification(ULONG NotificationReason, PLDR_DLL_NOTIFICA
     PWSTR name = d->BaseDllName->Buffer;
     HMODULE hDll = (HMODULE)d->DllBase;
     if (_wcsicmp(name, L"Game.dll") == 0) {
-        InstallGameMods(hDll);
+        if (!WrapGameEntry(hDll)) {
+            ModsLog("Game.dll entry point not found, installing the mods before it runs");
+            InstallGameMods(hDll);
+        }
     } else if (_wcsicmp(name, L"CryFont.dll") == 0) {
         InstallGlyphCells(hDll);
     }
