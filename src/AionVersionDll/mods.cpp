@@ -192,7 +192,7 @@ struct Setting {
 static const Setting LOG_SETTING = { L"General", L"Log", Setting::Bool, &g_modsConfig.log, 0 };
 
 static const Setting SETTINGS[] = {
-    { L"ChatTime", L"Enabled", Setting::Bool, &g_modsConfig.chatTime, 0 },
+    { L"ChatTime", L"Format", Setting::Int, &g_modsConfig.chatTimeFormat, 0, 0, 2 },
     { L"AntiAfk", L"Enabled", Setting::Bool, &g_modsConfig.antiAfk, 0 },
     { L"AntiAfk", L"NoSessionTimeout", Setting::Bool, &g_modsConfig.noSessionTimeout, 0 },
     { L"Ping", L"Enabled", Setting::Bool, &g_modsConfig.ping, 0 },
@@ -289,7 +289,7 @@ static void InstallGameMods(HMODULE game) {
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
     InstallColorTagFix(game);
-    if (g_modsConfig.chatTime) {
+    if (g_modsConfig.chatTimeFormat != 0) {
         InstallChatTime(game);
     }
     InstallTimeouts(game);
@@ -401,7 +401,7 @@ void InstallMods(HINSTANCE self) {
         *slash = 0;
     }
     LoadConfig();
-    ModsLog("mods: chatTime=%d antiAfk=%d noSessionTimeout=%d ping=%d macroLimit=%d stats=%d", g_modsConfig.chatTime, g_modsConfig.antiAfk,
+    ModsLog("mods: chatTimeFormat=%d antiAfk=%d noSessionTimeout=%d ping=%d macroLimit=%d stats=%d", g_modsConfig.chatTimeFormat, g_modsConfig.antiAfk,
         g_modsConfig.noSessionTimeout, g_modsConfig.ping, g_modsConfig.macroLimit, g_modsConfig.statPrecision);
 
     LdrRegisterDllNotification_t reg = (LdrRegisterDllNotification_t)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "LdrRegisterDllNotification");

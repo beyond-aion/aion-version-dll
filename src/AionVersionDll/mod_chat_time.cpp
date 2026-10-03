@@ -27,7 +27,12 @@ static thread_local bool s_prefixPending = false;
 static void MakePrefix() {
     SYSTEMTIME t;
     GetLocalTime(&t);
-    int length = swprintf_s(s_prefix, L"[color:(%02d:%02d:%02d);0.678 0.678 0.678] ", t.wHour, t.wMinute, t.wSecond);
+    int length;
+    if (g_modsConfig.chatTimeFormat == 1) {
+        length = swprintf_s(s_prefix, L"[color:(%02d:%02d);0.678 0.678 0.678] ", t.wHour, t.wMinute);
+    } else {
+        length = swprintf_s(s_prefix, L"[color:(%02d:%02d:%02d);0.678 0.678 0.678] ", t.wHour, t.wMinute, t.wSecond);
+    }
     s_prefixLength = length > 0 ? length : 0;
 }
 

@@ -7,7 +7,7 @@
 /// Settings from mods.ini next to version.dll. Missing keys fall back to the defaults in mods.cpp.
 struct ModsConfig {
     bool log;
-    bool chatTime;
+    int chatTimeFormat;
     bool antiAfk;
     bool noSessionTimeout;
     bool ping;
