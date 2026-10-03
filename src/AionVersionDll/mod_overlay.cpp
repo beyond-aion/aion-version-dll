@@ -144,7 +144,7 @@ static bool RenderText(IDirect3DDevice9* device, TextTexture& target, const wcha
                 }
                 float distance = SampleFont(glyph->x + u, glyph->y + v);
                 float center = Coverage(distance, 0, sizeFactor);
-                float shadow = Coverage(distance, 0.3f, sizeFactor);
+                float shadow = Coverage(distance, 0.25f, sizeFactor);
                 int k = y * width + x;
                 // glyph quads of neighbours overlap at their borders; keep the stronger one
                 red[k] = max(red[k], r * center);
