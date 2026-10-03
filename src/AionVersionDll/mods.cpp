@@ -398,13 +398,6 @@ static DWORD WINAPI WatchGameModule(LPVOID) {
 
 /// Must be called inside an open Detours transaction.
 void InstallMods(HINSTANCE self) {
-    // other programs in the game folder, like the web browser process, load version.dll as well
-    wchar_t exe[MAX_PATH];
-    GetModuleFileNameW(nullptr, exe, MAX_PATH);
-    const wchar_t* exeName = wcsrchr(exe, L'\\');
-    if (_wcsicmp(exeName ? exeName + 1 : exe, L"aion.bin") != 0) {
-        return;
-    }
     GetModuleFileNameW(self, s_dir, MAX_PATH);
     wchar_t* slash = wcsrchr(s_dir, L'\\');
     if (slash) {

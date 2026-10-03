@@ -95,10 +95,7 @@ static void InstallPatch(HINSTANCE self) {
     Install64BitStackFix();
     InstallMods(self);
 #endif
-    LONG error = DetourTransactionCommit();
-#if defined(_M_AMD64)
-    ModsLog("startup hooks committed: %ld", error);
-#endif
+    DetourTransactionCommit();
 
     FixClientStartupWithHighCoreCountCpus();
 }
@@ -106,7 +103,13 @@ static void InstallPatch(HINSTANCE self) {
 BOOL WINAPI DllMain(_In_ HINSTANCE hinstDLL, _In_ DWORD fdwReason, _In_ LPVOID lpvReserved) {
     if (fdwReason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hinstDLL);
-        InstallPatch(hinstDLL);
+        wchar_t exe[MAX_PATH];
+        GetModuleFileName(nullptr, exe, MAX_PATH);
+        const wchar_t* exeName = wcsrchr(exe, L'\\');
+        // other programs in the game folder, like the web browser process, load version.dll as well
+        if (_wcsicmp(exeName ? exeName + 1 : exe, L"aion.bin") == 0) {
+            InstallPatch(hinstDLL);
+        }
     }
     return TRUE;
 }
