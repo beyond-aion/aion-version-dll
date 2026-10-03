@@ -14,7 +14,6 @@ volatile int* g_gameState = nullptr;
 static wchar_t s_dir[MAX_PATH];
 static FILE* s_log = nullptr;
 static volatile LONG s_gameModsInstalled = 0;
-static volatile LONG s_installing = 0;
 
 void ModsLog(const char* format, ...) {
     if (!s_log) {
@@ -317,83 +316,83 @@ static bool FindGameState(HMODULE game) {
 }
 
 static void InstallGameMods(HMODULE game) {
-    if (InterlockedExchange(&s_installing, 1)) {
+    if (s_gameModsInstalled) {
         return;
     }
-    if (!s_gameModsInstalled) {
-        FindGameState(game);
-        ModsLog("Game.dll at %p, game state at %p", game, g_gameState);
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        InstallColorTagFix(game);
-        if (g_modsConfig.chatTime) {
-            InstallChatTime(game);
-        }
-        InstallTimeouts(game);
-        if (g_modsConfig.ping) {
-            InstallPing(game);
-        }
-        if (g_modsConfig.macroLimit) {
-            InstallMacroLimit(game);
-        }
-        if (g_modsConfig.statPrecision) {
-            InstallStatPrecision(game);
-        }
-        if (g_modsConfig.questTargets) {
-            InstallQuestTargets(game);
-        }
-        InstallUiScale(game);
-        LONG error = DetourTransactionCommit();
-        ModsLog("game hooks committed: %ld", error);
-        s_gameModsInstalled = 1;
+    FindGameState(game);
+    ModsLog("Game.dll at %p, game state at %p", game, g_gameState);
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+    InstallColorTagFix(game);
+    if (g_modsConfig.chatTime) {
+        InstallChatTime(game);
     }
-    s_installing = 0;
+    InstallTimeouts(game);
+    if (g_modsConfig.ping) {
+        InstallPing(game);
+    }
+    if (g_modsConfig.macroLimit) {
+        InstallMacroLimit(game);
+    }
+    if (g_modsConfig.statPrecision) {
+        InstallStatPrecision(game);
+    }
+    if (g_modsConfig.questTargets) {
+        InstallQuestTargets(game);
+    }
+    if (g_modsConfig.uiScaleMax > 130) {
+        InstallUiScale(game);
+    }
+    LONG error = DetourTransactionCommit();
+    ModsLog("game hooks committed: %ld", error);
+    s_gameModsInstalled = 1;
 }
 
-typedef LONG(NTAPI* LdrLoadDll_t)(PWSTR, PULONG, PVOID, PVOID*);
-static LdrLoadDll_t real_LdrLoadDll = nullptr;
+static PVOID s_ldrCookie = nullptr;
 
-/// Game.dll unpacks itself while it loads, so its code is ready once the load call that returns it is done.
+/// Game.dll unpacks itself while it loads, so its code is ready once the load notification arrives.
 static volatile LONG s_cryFontPatched = 0;
 
-static void CheckCryFont(HMODULE loaded) {
-    if (loaded && !s_cryFontPatched && loaded == GetModuleHandleW(L"CryFont.dll") && !InterlockedExchange(&s_cryFontPatched, 1)) {
-        InstallGlyphCells(loaded);
-    }
-}
+typedef struct _UNICODE_STRING {
+    USHORT Length;
+    USHORT MaximumLength;
+    PWSTR Buffer;
+} UNICODE_STRING, *PUNICODE_STRING;
 
-static LONG NTAPI zzLdrLoadDll(PWSTR searchPath, PULONG characteristics, PVOID name, PVOID* handle) {
-    LONG status = real_LdrLoadDll(searchPath, characteristics, name, handle);
-    if (status >= 0 && handle) {
-        CheckCryFont((HMODULE)*handle);
-    }
-    if (status >= 0 && handle && *handle && !s_gameModsInstalled && *handle == GetModuleHandleW(L"Game.dll")) {
-        InstallGameMods((HMODULE)*handle);
-    }
-    return status;
-}
+typedef struct _LDR_DLL_LOADED_NOTIFICATION_DATA {
+    ULONG Flags;
+    PUNICODE_STRING FullDllName;
+    PUNICODE_STRING BaseDllName;
+    PVOID DllBase;
+    ULONG SizeOfImage;
+} LDR_DLL_LOADED_NOTIFICATION_DATA, *PLDR_DLL_LOADED_NOTIFICATION_DATA;
 
-/// Backup for the case that the game module arrives without going through the loader hook: waits until the game state
-/// can be found, or a while after the module appeared for clients where it cannot.
-static DWORD WINAPI WatchGameModule(LPVOID) {
-    int seen = -1;
-    for (int i = 0; i < 1200 && !s_gameModsInstalled; i++) {
-        Sleep(100);
-        HMODULE game = GetModuleHandleW(L"Game.dll");
-        if (!game || s_gameModsInstalled) {
-            continue;
-        }
-        if (seen < 0) {
-            seen = i;
-        }
-        if (FindGameState(game) || i - seen >= 100) {
-            InstallGameMods(game);
-        }
+typedef struct _LDR_DLL_NOTIFICATION_DATA {
+    union {
+        LDR_DLL_LOADED_NOTIFICATION_DATA Loaded;
+        LDR_DLL_LOADED_NOTIFICATION_DATA Unloaded;
+    } U;
+} LDR_DLL_NOTIFICATION_DATA, *PLDR_DLL_NOTIFICATION_DATA;
+
+typedef VOID(NTAPI* PLDR_DLL_NOTIFICATION_FUNCTION)(ULONG NotificationReason, PLDR_DLL_NOTIFICATION_DATA NotificationData, PVOID Context);
+typedef LONG (NTAPI* LdrRegisterDllNotification_t)(ULONG Flags, PLDR_DLL_NOTIFICATION_FUNCTION NotificationFunction, PVOID Context, PVOID* Cookie);
+
+static VOID NTAPI LdrDllNotification(ULONG NotificationReason, PLDR_DLL_NOTIFICATION_DATA NotificationData, PVOID Context) {
+    // Reason 1 == Loaded, 2 == Unloaded (per SDK examples)
+    if (NotificationReason != 1 || !NotificationData) {
+        return;
     }
-    if (!s_gameModsInstalled) {
-        ModsLog("Game.dll hooks not installed: module not loaded");
+    PLDR_DLL_LOADED_NOTIFICATION_DATA d = &NotificationData->U.Loaded;
+    if (!d->BaseDllName || !d->BaseDllName->Buffer) {
+        return;
     }
-    return 0;
+    PWSTR name = d->BaseDllName->Buffer;
+    HMODULE hDll = (HMODULE)d->DllBase;
+    if (_wcsicmp(name, L"Game.dll") == 0) {
+        InstallGameMods(hDll);
+    } else if (_wcsicmp(name, L"CryFont.dll") == 0) {
+        InstallGlyphCells(hDll);
+    }
 }
 
 /// Must be called inside an open Detours transaction.
@@ -420,12 +419,15 @@ void InstallMods(HINSTANCE self) {
     ModsLog("mods: chatTime=%d antiAfk=%d noSessionTimeout=%d ping=%d macroLimit=%d stats=%d", g_modsConfig.chatTime, g_modsConfig.antiAfk,
         g_modsConfig.noSessionTimeout, g_modsConfig.ping, g_modsConfig.macroLimit, g_modsConfig.statPrecision);
 
-    real_LdrLoadDll = (LdrLoadDll_t)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "LdrLoadDll");
-    if (real_LdrLoadDll) {
-        DetourAttach(&(PVOID&)real_LdrLoadDll, zzLdrLoadDll);
+    LdrRegisterDllNotification_t reg = (LdrRegisterDllNotification_t)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "LdrRegisterDllNotification");
+    if (reg) {
+        LONG st = reg(0, LdrDllNotification, nullptr, &s_ldrCookie);
+        if (st < 0) {
+            ModsLog("mods: LdrRegisterDllNotification failed: 0x%08X", (unsigned)st);
+        }
+    } else {
+        ModsLog("mods: LdrRegisterDllNotification not found");
     }
-    CheckCryFont(GetModuleHandleW(L"CryFont.dll"));
-    CloseHandle(CreateThread(nullptr, 0, WatchGameModule, nullptr, 0, nullptr));
     if (g_modsConfig.ping) {
         InstallOverlay();
     }

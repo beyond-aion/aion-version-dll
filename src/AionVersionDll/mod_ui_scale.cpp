@@ -35,9 +35,6 @@ void InstallGlyphCells(HMODULE cryFont) {
 /// Lets the UI scale option go past 130 %. The client still caps the result at the screen size relative to 1280x960,
 /// which is 225 % on a 3840x2160 screen.
 void InstallUiScale(HMODULE game) {
-    if (g_modsConfig.uiScaleMax <= 130) {
-        return;
-    }
     INT32 maxPercent = g_modsConfig.uiScaleMax;
     float sliderRange = (float)(maxPercent - MIN_PERCENT);
 
