@@ -188,8 +188,9 @@ struct Setting {
     float max;
 };
 
+static const Setting LOG_SETTING = { L"General", L"Log", Setting::Bool, &g_modsConfig.log, 0 };
+
 static const Setting SETTINGS[] = {
-    { L"General", L"Log", Setting::Bool, &g_modsConfig.log, 1 },
     { L"ChatTime", L"Enabled", Setting::Bool, &g_modsConfig.chatTime, 0 },
     { L"AntiAfk", L"Enabled", Setting::Bool, &g_modsConfig.antiAfk, 0 },
     { L"AntiAfk", L"NoSessionTimeout", Setting::Bool, &g_modsConfig.noSessionTimeout, 0 },
@@ -215,19 +216,6 @@ static void Apply(const Setting& setting, float value) {
     }
 }
 
-static std::vector<std::string> s_configProblems;
-
-static void ConfigProblem(const wchar_t* format, ...) {
-    wchar_t text[512];
-    va_list args;
-    va_start(args, format);
-    vswprintf_s(text, format, args);
-    va_end(args);
-    char utf8[1024];
-    WideCharToMultiByte(CP_UTF8, 0, text, -1, utf8, sizeof(utf8), nullptr, nullptr);
-    s_configProblems.push_back(utf8);
-}
-
 /// Reads one value, reporting values that are not a number, not 0/1 for switches, or out of range.
 static void Read(const Setting& setting) {
     Apply(setting, setting.defaultValue);
@@ -242,63 +230,39 @@ static void Read(const Setting& setting) {
         end++;
     }
     if (*end || end == text) {
-        ConfigProblem(L"[%s] %s = %s is not a number, using %g", setting.section, setting.key, text, setting.defaultValue);
+        ModsLog("mods.ini: [%ls] %ls = %ls is not a number, using %g", setting.section, setting.key, text, setting.defaultValue);
         return;
     }
     if (setting.type == Setting::Bool && value != 0 && value != 1) {
-        ConfigProblem(L"[%s] %s = %s should be 0 or 1, using %g", setting.section, setting.key, text, setting.defaultValue);
+        ModsLog("mods.ini: [%ls] %ls = %ls should be 0 or 1, using %g", setting.section, setting.key, text, setting.defaultValue);
         return;
     }
     if (setting.type != Setting::Bool && (value < setting.min || value > setting.max)) {
         float clamped = min(setting.max, max(setting.min, value));
-        ConfigProblem(L"[%s] %s = %s is outside %g..%g, using %g", setting.section, setting.key, text, setting.min, setting.max, clamped);
+        ModsLog("mods.ini: [%ls] %ls = %ls is outside %g..%g, using %g", setting.section, setting.key, text, setting.min, setting.max, clamped);
         value = clamped;
     }
     Apply(setting, value);
 }
 
-/// Reports sections and keys the mods do not know, which are usually typos.
-static void CheckUnknownKeys() {
-    static wchar_t names[4096];
-    static wchar_t entries[8192];
-    GetPrivateProfileSectionNamesW(names, _countof(names), g_modsIniPath);
-    for (wchar_t* section = names; *section; section += wcslen(section) + 1) {
-        bool knownSection = false;
-        for (const Setting& setting : SETTINGS) {
-            knownSection |= _wcsicmp(setting.section, section) == 0;
-        }
-        if (!knownSection) {
-            ConfigProblem(L"unknown section [%s]", section);
-            continue;
-        }
-        GetPrivateProfileSectionW(section, entries, _countof(entries), g_modsIniPath);
-        for (wchar_t* entry = entries; *entry; entry += wcslen(entry) + 1) {
-            wchar_t key[64] = {};
-            const wchar_t* equals = wcschr(entry, L'=');
-            wcsncpy_s(key, entry, equals ? min((size_t)(equals - entry), _countof(key) - 1) : _TRUNCATE);
-            for (wchar_t* k = key + wcslen(key); k > key && (k[-1] == L' ' || k[-1] == L'\t'); k--) {
-                k[-1] = 0;
-            }
-            bool knownKey = false;
-            for (const Setting& setting : SETTINGS) {
-                knownKey |= _wcsicmp(setting.section, section) == 0 && _wcsicmp(setting.key, key) == 0;
-            }
-            if (!knownKey) {
-                ConfigProblem(L"unknown key [%s] %s", section, key);
-            }
-        }
-    }
-}
-
 static void LoadConfig() {
     swprintf_s(g_modsIniPath, L"%s\\mods.ini", s_dir);
+    Read(LOG_SETTING);
+    if (g_modsConfig.log) {
+        wchar_t logPath[MAX_PATH];
+        swprintf_s(logPath, L"%s\\mods.log", s_dir);
+        s_log = _wfsopen(logPath, L"w", _SH_DENYNO);
+        if (!s_log) {
+            // another client from the same folder still holds the log
+            swprintf_s(logPath, L"%s\\mods_%lu.log", s_dir, GetCurrentProcessId());
+            s_log = _wfsopen(logPath, L"w", _SH_DENYNO);
+        }
+    }
     for (const Setting& setting : SETTINGS) {
         Read(setting);
     }
     if (GetFileAttributesW(g_modsIniPath) == INVALID_FILE_ATTRIBUTES) {
-        ConfigProblem(L"mods.ini not found, using the defaults");
-    } else {
-        CheckUnknownKeys();
+        ModsLog("mods.ini: file not found, using the defaults");
     }
 }
 
@@ -403,19 +367,6 @@ void InstallMods(HINSTANCE self) {
         *slash = 0;
     }
     LoadConfig();
-    if (g_modsConfig.log) {
-        wchar_t logPath[MAX_PATH];
-        swprintf_s(logPath, L"%s\\mods.log", s_dir);
-        s_log = _wfsopen(logPath, L"w", _SH_DENYNO);
-        if (!s_log) {
-            // another client from the same folder still holds the log
-            swprintf_s(logPath, L"%s\\mods_%lu.log", s_dir, GetCurrentProcessId());
-            s_log = _wfsopen(logPath, L"w", _SH_DENYNO);
-        }
-    }
-    for (const std::string& problem : s_configProblems) {
-        ModsLog("mods.ini: %s", problem.c_str());
-    }
     ModsLog("mods: chatTime=%d antiAfk=%d noSessionTimeout=%d ping=%d macroLimit=%d stats=%d", g_modsConfig.chatTime, g_modsConfig.antiAfk,
         g_modsConfig.noSessionTimeout, g_modsConfig.ping, g_modsConfig.macroLimit, g_modsConfig.statPrecision);
 
