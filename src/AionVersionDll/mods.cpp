@@ -1,11 +1,11 @@
 #include "mods.h"
+#include "module_load.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <share.h>
 #include <shlwapi.h>
 #include <string>
 #include <vector>
-#include <intrin.h>
 #include "detours.h"
 
 ModsConfig g_modsConfig = {};
@@ -65,18 +65,13 @@ BYTE* FindPattern(HMODULE module, const char* pattern) {
     return found.size() == 1 ? found[0] : nullptr;
 }
 
-static size_t ImageSize(HMODULE module) {
-    auto dos = (PIMAGE_DOS_HEADER)module;
-    return ((PIMAGE_NT_HEADERS)((BYTE*)module + dos->e_lfanew))->OptionalHeader.SizeOfImage;
-}
-
 bool InModule(HMODULE module, const void* address, size_t size) {
-    return (const BYTE*)address >= (const BYTE*)module && (const BYTE*)address + size <= (const BYTE*)module + ImageSize(module);
+    return (const BYTE*)address >= (const BYTE*)module && (const BYTE*)address + size <= (const BYTE*)module + ModuleImageSize(module);
 }
 
 BYTE* FindBytes(HMODULE module, const void* bytes, size_t length) {
     BYTE* begin = (BYTE*)module;
-    BYTE* end = begin + ImageSize(module) - length;
+    BYTE* end = begin + ModuleImageSize(module) - length;
     for (BYTE* c = begin; c < end; c++) {
         if (*c == *(const BYTE*)bytes && memcmp(c, bytes, length) == 0) {
             return c;
@@ -96,7 +91,7 @@ BYTE* FindRipReference(HMODULE module, const char* opcode, int length, const voi
         }
     }
     BYTE* begin = (BYTE*)module;
-    BYTE* end = begin + ImageSize(module) - length;
+    BYTE* end = begin + ModuleImageSize(module) - length;
     for (BYTE* c = begin; c < end; c++) {
         if (memcmp(c, code, codeLength) == 0 && ResolveRip(c + length - 4, c + length) == target) {
             return c;
@@ -109,7 +104,7 @@ static constexpr int STATE_IN_WORLD = 14;
 
 BYTE* FindLeaTo(HMODULE module, const void* target) {
     BYTE* begin = (BYTE*)module;
-    BYTE* end = begin + ImageSize(module) - 7;
+    BYTE* end = begin + ModuleImageSize(module) - 7;
     for (BYTE* c = begin; c < end; c++) {
         if ((c[0] == 0x48 || c[0] == 0x4C) && c[1] == 0x8D && (c[2] & 0xC7) == 0x05 && ResolveRip(c + 3, c + 7) == target) {
             return c;
@@ -120,7 +115,7 @@ BYTE* FindLeaTo(HMODULE module, const void* target) {
 
 BYTE* FindCallTo(HMODULE module, const void* target) {
     BYTE* begin = (BYTE*)module;
-    BYTE* end = begin + ImageSize(module) - 5;
+    BYTE* end = begin + ModuleImageSize(module) - 5;
     for (BYTE* c = begin; c < end; c++) {
         if (c[0] == 0xE8 && ResolveRip(c + 1, c + 5) == target) {
             return c;
@@ -333,86 +328,6 @@ static void InstallGameMods(HMODULE game) {
     s_gameModsInstalled = 1;
 }
 
-static PVOID s_ldrCookie = nullptr;
-
-typedef BOOL(WINAPI* DllEntry_t)(HINSTANCE instance, DWORD reason, LPVOID reserved);
-static DllEntry_t real_GameEntry = nullptr;
-
-static BOOL WINAPI zzGameEntry(HINSTANCE instance, DWORD reason, LPVOID reserved) {
-    BOOL result = real_GameEntry(instance, reason, reserved);
-    if (reason == DLL_PROCESS_ATTACH && result) {
-        InstallGameMods((HMODULE)instance);
-    }
-    return result;
-}
-
-/// Some clients pack Game.dll and unpack it in its entry point, which runs after the load notification. Points the loader's
-/// entry for the module at a wrapper, so that the mods are installed once the entry point has returned.
-static bool WrapGameEntry(HMODULE game) {
-    // PEB->Ldr->InLoadOrderModuleList; each entry starts with its links, DllBase at +30h and EntryPoint at +38h
-    BYTE* peb = (BYTE*)__readgsqword(0x60);
-    LIST_ENTRY* head = (LIST_ENTRY*)(*(BYTE**)(peb + 0x18) + 0x10);
-    for (LIST_ENTRY* link = head->Flink; link != head; link = link->Flink) {
-        BYTE* entry = (BYTE*)link;
-        if (*(HMODULE*)(entry + 0x30) != game) {
-            continue;
-        }
-        PVOID* entryPoint = (PVOID*)(entry + 0x38);
-        if (!*entryPoint) {
-            return false;
-        }
-        real_GameEntry = (DllEntry_t)*entryPoint;
-        *entryPoint = (PVOID)zzGameEntry;
-        return true;
-    }
-    return false;
-}
-
-typedef struct _UNICODE_STRING {
-    USHORT Length;
-    USHORT MaximumLength;
-    PWSTR Buffer;
-} UNICODE_STRING, *PUNICODE_STRING;
-
-typedef struct _LDR_DLL_LOADED_NOTIFICATION_DATA {
-    ULONG Flags;
-    PUNICODE_STRING FullDllName;
-    PUNICODE_STRING BaseDllName;
-    PVOID DllBase;
-    ULONG SizeOfImage;
-} LDR_DLL_LOADED_NOTIFICATION_DATA, *PLDR_DLL_LOADED_NOTIFICATION_DATA;
-
-typedef struct _LDR_DLL_NOTIFICATION_DATA {
-    union {
-        LDR_DLL_LOADED_NOTIFICATION_DATA Loaded;
-        LDR_DLL_LOADED_NOTIFICATION_DATA Unloaded;
-    } U;
-} LDR_DLL_NOTIFICATION_DATA, *PLDR_DLL_NOTIFICATION_DATA;
-
-typedef VOID(NTAPI* PLDR_DLL_NOTIFICATION_FUNCTION)(ULONG NotificationReason, PLDR_DLL_NOTIFICATION_DATA NotificationData, PVOID Context);
-typedef LONG (NTAPI* LdrRegisterDllNotification_t)(ULONG Flags, PLDR_DLL_NOTIFICATION_FUNCTION NotificationFunction, PVOID Context, PVOID* Cookie);
-
-static VOID NTAPI LdrDllNotification(ULONG NotificationReason, PLDR_DLL_NOTIFICATION_DATA NotificationData, PVOID Context) {
-    // Reason 1 == Loaded, 2 == Unloaded (per SDK examples)
-    if (NotificationReason != 1 || !NotificationData) {
-        return;
-    }
-    PLDR_DLL_LOADED_NOTIFICATION_DATA d = &NotificationData->U.Loaded;
-    if (!d->BaseDllName || !d->BaseDllName->Buffer) {
-        return;
-    }
-    PWSTR name = d->BaseDllName->Buffer;
-    HMODULE hDll = (HMODULE)d->DllBase;
-    if (_wcsicmp(name, L"Game.dll") == 0) {
-        if (!WrapGameEntry(hDll)) {
-            ModsLog("Game.dll entry point not found, installing the mods before it runs");
-            InstallGameMods(hDll);
-        }
-    } else if (_wcsicmp(name, L"CryFont.dll") == 0) {
-        InstallGlyphCells(hDll);
-    }
-}
-
 /// Must be called inside an open Detours transaction.
 void InstallMods(HINSTANCE self) {
     GetModuleFileNameW(self, s_dir, MAX_PATH);
@@ -423,16 +338,10 @@ void InstallMods(HINSTANCE self) {
     LoadConfig();
     ModsLog("mods: chatTimeFormat=%d antiAfk=%d noSessionTimeout=%d ping=%d macroLimit=%d stats=%d", g_modsConfig.chatTimeFormat, g_modsConfig.antiAfk,
         g_modsConfig.noSessionTimeout, g_modsConfig.ping, g_modsConfig.macroLimit, g_modsConfig.statPrecision);
+    g_moduleLog = ModsLog;
 
-    LdrRegisterDllNotification_t reg = (LdrRegisterDllNotification_t)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "LdrRegisterDllNotification");
-    if (reg) {
-        LONG st = reg(0, LdrDllNotification, nullptr, &s_ldrCookie);
-        if (st < 0) {
-            ModsLog("mods: LdrRegisterDllNotification failed: 0x%08X", (unsigned)st);
-        }
-    } else {
-        ModsLog("mods: LdrRegisterDllNotification not found");
-    }
+    OnModuleLoad(L"Game.dll", InstallGameMods, true);
+    OnModuleLoad(L"CryFont.dll", InstallGlyphCells, false);
     if (g_modsConfig.ping) {
         InstallOverlay();
     }

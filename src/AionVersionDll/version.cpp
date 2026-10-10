@@ -51,6 +51,7 @@ void InstallIpFix();
 void InstallXigncodeFix();
 void InstallShaderFix();
 void Install64BitStackFix();
+void InstallFullscreenFix();
 
 static decltype(SetWindowLongA)* real_SetWindowLongA = SetWindowLongA;
 static LONG WINAPI zzSetWindowLongA(_In_ HWND hWnd, _In_ int nIndex, _In_ LONG dwNewLong) {
@@ -95,6 +96,7 @@ static void InstallPatch(HINSTANCE self) {
     Install64BitStackFix();
     InstallMods(self);
 #endif
+    InstallFullscreenFix();
     DetourTransactionCommit();
 
     FixClientStartupWithHighCoreCountCpus();

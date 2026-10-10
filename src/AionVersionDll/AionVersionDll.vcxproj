@@ -213,7 +213,9 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="exports.cpp" />
+    <ClCompile Include="fullscreen_fix.cpp" />
     <ClCompile Include="ip_fix.cpp" />
+    <ClCompile Include="module_load.cpp" />
     <ClCompile Include="mods.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
@@ -290,6 +292,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="exports.h" />
+    <ClInclude Include="module_load.h" />
     <ClInclude Include="mods.h" />
     <ClInclude Include="ping.h" />
     <ClInclude Include="resource.h" />

@@ -9,6 +9,7 @@ Fixes:
 - Fixes the `XignCode Error` when launching v5.x+ game clients (disables XignCode entirely).
 - Fixes black flickering that occurs when using the game's High Quality graphics engine on Nvidia graphics cards and similar issues on AMD cards when using DXVK on Windows.
 - Enables all graphics options sliders (shadows, water quality, etc) which are otherwise disabled at high resolutions.
+- Fixes a stretched picture and a misplaced mouse cursor on screens larger than 2560x1920 (like 3840x2160) in 4.x and 5.x clients, which cut the full screen resolution they save down to that size on the next start.
 - Fixes color tags in 64-bit 4.6 clients, which showed only the first 5 characters of their text.
 - [DXVK support](https://github.com/doitsujin/dxvk) - DXVK can improve performance and frame times.
 
