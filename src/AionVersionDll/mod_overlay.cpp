@@ -16,11 +16,13 @@ typedef IDirect3D9*(WINAPI* Direct3DCreate9_t)(UINT);
 typedef HRESULT(STDMETHODCALLTYPE* CreateDevice_t)(IDirect3D9*, UINT, D3DDEVTYPE, HWND, DWORD, D3DPRESENT_PARAMETERS*, IDirect3DDevice9**);
 typedef HRESULT(STDMETHODCALLTYPE* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
 typedef HRESULT(STDMETHODCALLTYPE* Reset_t)(IDirect3DDevice9*, D3DPRESENT_PARAMETERS*);
+typedef ULONG(STDMETHODCALLTYPE* Release_t)(IDirect3DDevice9*);
 
 static Direct3DCreate9_t real_Direct3DCreate9 = nullptr;
 static CreateDevice_t real_CreateDevice = nullptr;
 static Present_t real_Present = nullptr;
 static Reset_t real_Reset = nullptr;
+static Release_t real_Release = nullptr;
 
 struct TextTexture {
     IDirect3DDevice9* device = nullptr;
@@ -44,6 +46,20 @@ struct TextTexture {
 };
 
 static TextTexture s_pingText;
+
+// Steps of drawing that already logged a failure, so that a failing frame does not flood mods.log.
+static DWORD s_loggedFailures = 0;
+
+static bool Failed(HRESULT result, int step, const char* what) {
+    if (SUCCEEDED(result)) {
+        return false;
+    }
+    if (!(s_loggedFailures & (1u << step))) {
+        s_loggedFailures |= 1u << step;
+        ModsLog("overlay: %s failed: %08lx", what, result);
+    }
+    return true;
+}
 
 // Where the text was drawn last, in back buffer pixels, and the size of the back buffer, for dragging it with the mouse.
 static volatile LONG s_textLeft, s_textTop, s_textWidth, s_textHeight;
@@ -156,11 +172,11 @@ static bool RenderText(IDirect3DDevice9* device, TextTexture& target, const wcha
     }
 
     IDirect3DTexture9* texture = nullptr;
-    if (FAILED(device->CreateTexture(width, height, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &texture, nullptr))) {
+    if (Failed(device->CreateTexture(width, height, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &texture, nullptr), 0, "CreateTexture")) {
         return false;
     }
     D3DLOCKED_RECT locked;
-    if (FAILED(texture->LockRect(0, &locked, nullptr, 0))) {
+    if (Failed(texture->LockRect(0, &locked, nullptr, 0), 1, "LockRect")) {
         texture->Release();
         return false;
     }
@@ -190,7 +206,19 @@ struct Vertex {
     float u, v;
 };
 
-static void DrawTexture(IDirect3DDevice9* device, const TextTexture& t, float x, float y) {
+// The game's values of every state the text changes, saved before drawing and put back after it.
+static IDirect3DDevice9* s_savedStateDevice = nullptr;
+static IDirect3DStateBlock9* s_savedState = nullptr;
+
+static void ReleaseSavedState() {
+    if (s_savedState) {
+        s_savedState->Release();
+        s_savedState = nullptr;
+    }
+    s_savedStateDevice = nullptr;
+}
+
+static void SetTextState(IDirect3DDevice9* device, IDirect3DTexture9* texture) {
     device->SetRenderState(D3DRS_ZENABLE, FALSE);
     device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
     device->SetRenderState(D3DRS_STENCILENABLE, FALSE);
@@ -209,7 +237,7 @@ static void DrawTexture(IDirect3DDevice9* device, const TextTexture& t, float x,
     device->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
     device->SetVertexShader(nullptr);
     device->SetPixelShader(nullptr);
-    device->SetTexture(0, t.texture);
+    device->SetTexture(0, texture);
     device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
     device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
     device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
@@ -225,7 +253,29 @@ static void DrawTexture(IDirect3DDevice9* device, const TextTexture& t, float x,
     device->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
     device->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE);
     device->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+}
 
+/// Records a state block holding just the states the text changes: the render target switch resets the viewport, and drawing from
+/// user memory clears stream 0. Capturing and applying it costs far less than a block of the whole device state.
+static bool CreateSavedState(IDirect3DDevice9* device) {
+    ReleaseSavedState();
+    if (Failed(device->BeginStateBlock(), 2, "BeginStateBlock")) {
+        return false;
+    }
+    SetTextState(device, nullptr);
+    D3DVIEWPORT9 viewport = { 0, 0, 1, 1, 0, 1 };
+    device->SetViewport(&viewport);
+    device->SetStreamSource(0, nullptr, 0, 0);
+    if (Failed(device->EndStateBlock(&s_savedState), 3, "EndStateBlock")) {
+        s_savedState = nullptr;
+        return false;
+    }
+    s_savedStateDevice = device;
+    return true;
+}
+
+static void DrawTexture(IDirect3DDevice9* device, const TextTexture& t, float x, float y) {
+    SetTextState(device, t.texture);
     float left = x - 0.5f, top = y - 0.5f, right = left + t.width, bottom = top + t.height;
     Vertex quad[4] = {
         { left, top, 0, 1, 0, 0 },
@@ -233,20 +283,38 @@ static void DrawTexture(IDirect3DDevice9* device, const TextTexture& t, float x,
         { left, bottom, 0, 1, 0, 1 },
         { right, bottom, 0, 1, 1, 1 },
     };
-    device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(Vertex));
+    Failed(device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(Vertex)), 4, "DrawPrimitiveUP");
 }
+
+struct PingStop {
+    int ms;
+    int r, g, b;
+};
+
+// Green up to 60 ms, yellow at 100 ms, red from 200 ms; orange comes in between.
+static constexpr PingStop PING_STOPS[] = {
+    { 60, 110, 230, 110 },
+    { 100, 240, 210, 80 },
+    { 200, 240, 90, 80 },
+};
 
 static D3DCOLOR PingColor(int ms) {
     if (ms < 0) {
         return D3DCOLOR_XRGB(200, 200, 200);
     }
-    if (ms < 100) {
-        return D3DCOLOR_XRGB(110, 230, 110);
+    const PingStop* stop = PING_STOPS;
+    if (ms <= stop->ms) {
+        return D3DCOLOR_XRGB(stop->r, stop->g, stop->b);
     }
-    if (ms < 200) {
-        return D3DCOLOR_XRGB(240, 210, 80);
+    for (; stop + 1 < std::end(PING_STOPS); stop++) {
+        const PingStop& next = stop[1];
+        if (ms < next.ms) {
+            float t = (float)(ms - stop->ms) / (next.ms - stop->ms);
+            return D3DCOLOR_XRGB((int)(stop->r + (next.r - stop->r) * t + 0.5f), (int)(stop->g + (next.g - stop->g) * t + 0.5f),
+                (int)(stop->b + (next.b - stop->b) * t + 0.5f));
+        }
     }
-    return D3DCOLOR_XRGB(240, 90, 80);
+    return D3DCOLOR_XRGB(stop->r, stop->g, stop->b);
 }
 
 static void DrawOverlay(IDirect3DDevice9* device) {
@@ -263,7 +331,7 @@ static void DrawOverlay(IDirect3DDevice9* device) {
     }
 
     IDirect3DSurface9* backBuffer = nullptr;
-    if (FAILED(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backBuffer))) {
+    if (Failed(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backBuffer), 5, "GetBackBuffer")) {
         return;
     }
     D3DSURFACE_DESC desc;
@@ -272,19 +340,19 @@ static void DrawOverlay(IDirect3DDevice9* device) {
         backBuffer->Release();
         return;
     }
-    IDirect3DStateBlock9* state = nullptr;
-    if (FAILED(device->CreateStateBlock(D3DSBT_ALL, &state))) {
+    if ((s_savedStateDevice != device || !s_savedState) && !CreateSavedState(device)) {
         backBuffer->Release();
         return;
     }
+    Failed(s_savedState->Capture(), 6, "Capture");
     IDirect3DSurface9* oldTarget = nullptr;
-    device->GetRenderTarget(0, &oldTarget);
-    device->SetRenderTarget(0, backBuffer);
+    Failed(device->GetRenderTarget(0, &oldTarget), 7, "GetRenderTarget");
+    Failed(device->SetRenderTarget(0, backBuffer), 8, "SetRenderTarget");
 
     // the configured position is where the base line of the text starts, like positions in the DXVK HUD
     int x = min(g_modsConfig.pingX - s_pingText.originX, max(0, (int)desc.Width - s_pingText.width));
     int y = min(g_modsConfig.pingY - s_pingText.originY, max(0, (int)desc.Height - s_pingText.height));
-    if (SUCCEEDED(device->BeginScene())) {
+    if (!Failed(device->BeginScene(), 9, "BeginScene")) {
         DrawTexture(device, s_pingText, (float)x, (float)y);
         device->EndScene();
     }
@@ -300,8 +368,7 @@ static void DrawOverlay(IDirect3DDevice9* device) {
     if (oldTarget) {
         oldTarget->Release();
     }
-    state->Apply();
-    state->Release();
+    s_savedState->Apply();
     backBuffer->Release();
 }
 
@@ -376,22 +443,61 @@ static HRESULT STDMETHODCALLTYPE zzPresent(IDirect3DDevice9* device, const RECT*
 
 static HRESULT STDMETHODCALLTYPE zzReset(IDirect3DDevice9* device, D3DPRESENT_PARAMETERS* params) {
     s_pingText.Release();
+    ReleaseSavedState();
     return real_Reset(device, params);
+}
+
+static IDirect3DDevice9* volatile s_device = nullptr;
+
+static ULONG STDMETHODCALLTYPE zzRelease(IDirect3DDevice9* device) {
+    ULONG references = real_Release(device);
+    if (references == 0 && device == s_device) {
+        s_device = nullptr;
+    }
+    return references;
+}
+
+/// Puts the text's Present, Reset and Release into the device's method table again when something else wrote over them, and keeps what
+/// it wrote as the methods to call on. RivaTuner gives the device its own copy of the table and later restores the methods of
+/// d3d9.dll in it, so a hook placed once, in the table or in the code of d3d9.dll, stops being called.
+void KeepOverlayHooks() {
+    IDirect3DDevice9* device = s_device;
+    if (!device) {
+        return;
+    }
+    void** vtable = *(void***)device;
+    if (vtable[2] == zzRelease && vtable[16] == zzReset && vtable[17] == zzPresent) {
+        return;
+    }
+    if (vtable[2] != zzRelease) {
+        real_Release = (Release_t)vtable[2];
+        void* release = zzRelease;
+        if (!PatchMemory(&vtable[2], &release, sizeof(release))) {
+            ModsLog("overlay: could not hook the device methods at %p", vtable);
+            s_device = nullptr;
+            return;
+        }
+    }
+    if (vtable[16] != zzReset) {
+        real_Reset = (Reset_t)vtable[16];
+    }
+    if (vtable[17] != zzPresent) {
+        real_Present = (Present_t)vtable[17];
+    }
+    void* methods[] = { zzReset, zzPresent };
+    if (!PatchMemory(&vtable[16], methods, sizeof(methods))) {
+        ModsLog("overlay: could not hook the device methods at %p", vtable);
+        s_device = nullptr;
+    }
 }
 
 static HRESULT STDMETHODCALLTYPE zzCreateDevice(IDirect3D9* d3d, UINT adapter, D3DDEVTYPE type, HWND window, DWORD flags,
     D3DPRESENT_PARAMETERS* params, IDirect3DDevice9** device) {
     HRESULT result = real_CreateDevice(d3d, adapter, type, window, flags, params, device);
-    if (SUCCEEDED(result) && *device && !real_Present) {
-        void** vtable = *(void***)*device;
-        real_Reset = (Reset_t)vtable[16];
-        real_Present = (Present_t)vtable[17];
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        DetourAttach(&(PVOID&)real_Reset, zzReset);
-        DetourAttach(&(PVOID&)real_Present, zzPresent);
-        LONG error = DetourTransactionCommit();
-        ModsLog("overlay: device hooks committed: %ld", error);
+    ModsLog("overlay: CreateDevice type=%d flags=%08lx windowed=%d result=%08lx", type, flags, params ? params->Windowed : -1, result);
+    if (SUCCEEDED(result) && *device && !s_device) {
+        s_device = *device;
+        KeepOverlayHooks();
         HookWindow(params && params->hDeviceWindow ? params->hDeviceWindow : window);
     }
     return result;

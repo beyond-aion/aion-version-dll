@@ -1,6 +1,8 @@
 #include "mods.h"
 #include <map>
 #include <stdio.h>
+#include <unordered_map>
+#include <vector>
 #include "detours.h"
 
 // First entry of the table of graphic characters for quest icons (givable, working, finished per quest kind).
@@ -58,27 +60,45 @@ extern "C" INT64 g_questIconLines = 0;
 extern "C" void QuestIconStubR15R12();
 extern "C" void QuestIconStubR14Rbp();
 
-/// The quest in progress whose current step needs the NPC (to kill, loot or gather), from the client's quest monster table.
-static int FindQuestNeeding(int npcId) {
-    int count = *s_questCount;
+// Id and step of each quest in progress the NPC lookup was built from, and the lookup: NPC id to the first quest needing it.
+// Names are built for every NPC on screen in every frame, so the table is only queried again when a quest changes.
+static std::vector<std::pair<int, int>> s_lookupQuests;
+static std::unordered_map<int, int> s_questByNpc;
+
+static void RefreshQuestLookup() {
+    int count = max(0, *s_questCount);
     BYTE* quests = (BYTE*)(s_questCount + 1);
+    bool unchanged = count == (int)s_lookupQuests.size();
+    for (int i = 0; unchanged && i < count; i++) {
+        unchanged = s_lookupQuests[i].first == *(int*)(quests + 16 * i) && s_lookupQuests[i].second == *(int*)(quests + 16 * i + 5);
+    }
+    if (unchanged) {
+        return;
+    }
+    s_lookupQuests.clear();
+    s_questByNpc.clear();
     BYTE* buffer[MAX_ENTRIES];
     for (int i = 0; i < count; i++) {
         int questId = *(int*)(quests + 16 * i);
         int step = *(int*)(quests + 16 * i + 5);
+        s_lookupQuests.emplace_back(questId, step);
         EntryList entries = { nullptr, buffer, buffer, buffer + MAX_ENTRIES };
         s_queryQuestMonsters(s_questMonsterTable, questId, step, &entries);
         for (BYTE** entry = entries.first; entry < entries.last; entry++) {
             int* npc = *(int**)(*entry + 32);
             int* npcEnd = *(int**)(*entry + 40);
             for (; npc && npc < npcEnd; npc++) {
-                if (*npc == npcId) {
-                    return questId;
-                }
+                s_questByNpc.emplace(*npc, questId);
             }
         }
     }
-    return 0;
+}
+
+/// The quest in progress whose current step needs the NPC (to kill, loot or gather), from the client's quest monster table.
+static int FindQuestNeeding(int npcId) {
+    RefreshQuestLookup();
+    auto found = s_questByNpc.find(npcId);
+    return found != s_questByNpc.end() ? found->second : 0;
 }
 
 /// Puts the icon of the quest kind, as the quest window shows it, in front of the name of an NPC a quest in progress needs.

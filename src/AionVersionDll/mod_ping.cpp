@@ -119,6 +119,7 @@ static bool AnswerArrived() {
 /// Sends the next ping request once the interval has passed. Only runs on the thread that handles incoming packets,
 /// because sending shares the connection's cipher state with that thread.
 static void PingTick() {
+    KeepOverlayHooks();
     if (!sendPingRequest || GetCurrentThreadId() != s_gameThreadId) {
         return;
     }
@@ -189,9 +190,10 @@ int GetDisplayedPing() {
     if (!IsInWorld() || s_lastPingMs < 0) {
         return -1;
     }
-    // while an answer is overdue, show how long it has been missing so that a lag spike is visible right away
+    // while an answer is overdue, show how long it has been missing so that a lag spike is visible right away; in steps of
+    // 100 ms, as each new value renders the text again
     if (s_outstanding > 0 && !AnswerArrived()) {
-        int waiting = (int)MillisSince(s_sentAt);
+        int waiting = (int)MillisSince(s_sentAt) / 100 * 100;
         if (waiting > s_lastPingMs) {
             return waiting;
         }

@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <vector>
+#include <string>
 
 /// Settings from mods.ini next to version.dll. Missing keys fall back to the defaults in mods.cpp.
 struct ModsConfig {
@@ -16,6 +17,8 @@ struct ModsConfig {
     int pingY;
     float pingScale;
     int macroLimit;
+    int targetBuffColumns;
+    int ownBuffColumns;
     bool statPrecision;
     bool questTargets;
     int uiScaleMax; // percent
@@ -52,6 +55,10 @@ BYTE* FunctionStart(const void* address);
 /// End of the primary unwind range of the function starting at start.
 BYTE* FunctionEnd(const void* start);
 
+/// End of the whole body of the function starting at start, which can be split into chained unwind ranges: where the code of another
+/// function begins, at most maxSize bytes on.
+BYTE* FunctionBodyEnd(BYTE* start, size_t maxSize);
+
 /// Overwrites code or read-only data.
 bool PatchMemory(void* at, const void* value, size_t size);
 
@@ -73,10 +80,34 @@ void InstallColorTagFix(HMODULE game);
 void InstallTimeouts(HMODULE game);
 void InstallPing(HMODULE game);
 void InstallMacroLimit(HMODULE game);
+void InstallBuffLimit(HMODULE game);
+void InstallBuffSlots(HMODULE game, bool uiXml);
+/// Returns whether the edits can be applied.
+bool InstallUiXml(HMODULE game);
+
+/// A node of a UI XML file as the client's binary format stores it.
+struct XmlNode {
+    std::wstring name;
+    std::vector<std::pair<std::wstring, std::wstring>> attributes;
+    bool hasText = false;
+    std::wstring text;
+    std::vector<XmlNode> children;
+
+    const std::wstring* Attribute(const wchar_t* key) const;
+    void SetAttribute(const wchar_t* key, const std::wstring& value);
+    /// The child whose name attribute is the given one.
+    XmlNode* ChildNamed(const std::wstring& nameAttribute);
+};
+
+/// Changes a UI dialog every time the client loads it, from its own file (<name>.xml, any folder) or from the screen file that
+/// holds the dialogs of older clients. Register before InstallUiXml.
+void AddUiXmlEdit(const wchar_t* dialogName, void (*apply)(XmlNode& dialog));
 void InstallStatPrecision(HMODULE game);
 void InstallQuestTargets(HMODULE game);
 void InstallUiScale(HMODULE game);
 void InstallGlyphCells(HMODULE cryFont);
 void InstallOverlay();
+/// Hooks the device methods again when something else wrote over them; called once a frame.
+void KeepOverlayHooks();
 
 #endif
