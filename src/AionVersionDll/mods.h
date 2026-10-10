@@ -107,5 +107,7 @@ void InstallQuestTargets(HMODULE game);
 void InstallUiScale(HMODULE game);
 void InstallGlyphCells(HMODULE cryFont);
 void InstallOverlay();
+/// Hooks the device methods again when something else wrote over them; called once a frame.
+void KeepOverlayHooks();
 
 #endif

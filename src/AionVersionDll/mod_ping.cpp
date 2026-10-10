@@ -119,6 +119,7 @@ static bool AnswerArrived() {
 /// Sends the next ping request once the interval has passed. Only runs on the thread that handles incoming packets,
 /// because sending shares the connection's cipher state with that thread.
 static void PingTick() {
+    KeepOverlayHooks();
     if (!sendPingRequest || GetCurrentThreadId() != s_gameThreadId) {
         return;
     }
