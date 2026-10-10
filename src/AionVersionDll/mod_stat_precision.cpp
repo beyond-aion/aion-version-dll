@@ -80,15 +80,7 @@ static void* __fastcall zzSetStatTooltip(void* tooltip, void* widget, float curr
 /// Points every string with a one-decimal float placeholder, and every use of the rounding constants 10 and 0.05, at copies
 /// the hooks can change. Returns the number of places changed.
 static int RedirectFunction(HMODULE game, BYTE* function) {
-    // the body can be split into chained unwind ranges, so it ends where the code of another function begins
-    BYTE* end = function + 0x1000;
-    for (BYTE* p = function + 1; p < end; p++) {
-        BYTE* owner = FunctionStart(p);
-        if (owner && owner != function) {
-            end = p;
-            break;
-        }
-    }
+    BYTE* end = FunctionBodyEnd(function, 0x1000);
     int changed = 0;
     for (BYTE* p = function; p < end - 8; p++) {
         // lea reg, [rip+string]
@@ -116,6 +108,34 @@ static int RedirectFunction(HMODULE game, BYTE* function) {
                 changed += Redirect(op + 3, op + 7, &s_data->roundScale);
             } else if (*value == 0.05f) {
                 changed += Redirect(op + 3, op + 7, &s_data->roundOffset);
+            }
+        }
+    }
+    return changed;
+}
+
+/// 5.x shows attack speed as (delay + 1) / 1000, which one decimal rounds away but more show as 2.801 for a delay of 2800 ms. Drops
+/// the increment: movzx eax, word [stat]; ...; inc eax; ...; movd xmm, eax. Returns the number of places changed.
+static int DropAttackDelayIncrement(HMODULE game, const void* widgetName) {
+    static const BYTE NOP2[] = { 0x66, 0x90 };
+    int changed = 0;
+    for (BYTE* c = (BYTE*)game + 0x20; InModule(game, c, 0x40); c++) {
+        if ((c[0] != 0x48 && c[0] != 0x4C) || c[1] != 0x8D || (c[2] & 0xC7) != 0x05 || ResolveRip(c + 3, c + 7) != widgetName) {
+            continue;
+        }
+        for (BYTE* p = c - 0x20; p < c + 0x40; p++) {
+            if (p[0] != 0xFF || p[1] != 0xC0) {
+                continue;
+            }
+            bool loaded = false, moved = false;
+            for (BYTE* q = p - 0x20; q < p; q++) {
+                loaded |= q[0] == 0x0F && q[1] == 0xB7 && (q[2] & 0x38) == 0;
+            }
+            for (BYTE* q = p + 2; q < p + 18; q++) {
+                moved |= q[0] == 0x66 && q[1] == 0x0F && q[2] == 0x6E && (q[3] & 0xC7) == 0xC0;
+            }
+            if (loaded && moved) {
+                changed += PatchMemory(p, NOP2, sizeof(NOP2));
             }
         }
     }
@@ -150,8 +170,9 @@ void InstallStatPrecision(HMODULE game) {
     s_data->roundOffset = 0.05f;
     int valueChanges = RedirectFunction(game, (BYTE*)real_SetStatValue);
     int tooltipChanges = real_SetStatTooltip ? RedirectFunction(game, (BYTE*)real_SetStatTooltip) : 0;
-    ModsLog("stat precision: value=%p (%d changes) tooltip=%p (%d changes)", real_SetStatValue, valueChanges, real_SetStatTooltip,
-        tooltipChanges);
+    int incrementChanges = valueChanges ? DropAttackDelayIncrement(game, widgetName) : 0;
+    ModsLog("stat precision: value=%p (%d changes) tooltip=%p (%d changes) attack delay increments=%d", real_SetStatValue, valueChanges,
+        real_SetStatTooltip, tooltipChanges, incrementChanges);
     if (valueChanges) {
         DetourAttach(&(PVOID&)real_SetStatValue, zzSetStatValue);
     }

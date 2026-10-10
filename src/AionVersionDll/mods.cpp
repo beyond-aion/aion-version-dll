@@ -149,6 +149,16 @@ BYTE* FunctionEnd(const void* start) {
     return function ? (BYTE*)imageBase + function->EndAddress : nullptr;
 }
 
+BYTE* FunctionBodyEnd(BYTE* start, size_t maxSize) {
+    for (BYTE* p = start + 1; p < start + maxSize; p++) {
+        BYTE* owner = FunctionStart(p);
+        if (owner && owner != start) {
+            return p;
+        }
+    }
+    return start + maxSize;
+}
+
 bool PatchMemory(void* at, const void* value, size_t size) {
     DWORD oldProtect;
     // code and data share one section in some clients
@@ -196,13 +206,15 @@ static const Setting SETTINGS[] = {
     { L"AntiAfk", L"Enabled", Setting::Bool, &g_modsConfig.antiAfk, 0 },
     { L"AntiAfk", L"NoSessionTimeout", Setting::Bool, &g_modsConfig.noSessionTimeout, 0 },
     { L"Ping", L"Enabled", Setting::Bool, &g_modsConfig.ping, 0 },
-    { L"Ping", L"Interval", Setting::Int, &g_modsConfig.pingInterval, 3000, 1000, 60000 },
+    { L"Ping", L"Interval", Setting::Int, &g_modsConfig.pingInterval, 3000, 500, 60000 },
     // the start of the base line, one line below the frame rate of the DXVK HUD
     { L"Ping", L"X", Setting::Int, &g_modsConfig.pingX, 8, 0, 16384 },
     { L"Ping", L"Y", Setting::Int, &g_modsConfig.pingY, 48, 0, 16384 },
     { L"Ping", L"Scale", Setting::Float, &g_modsConfig.pingScale, 1, 0.25f, 4 },
     // the limit is a signed byte immediate in the client
     { L"Macros", L"Limit", Setting::Int, &g_modsConfig.macroLimit, 0, 0, 127 },
+    { L"Buffs", L"TargetColumns", Setting::Int, &g_modsConfig.targetBuffColumns, 0, 0, 64 },
+    { L"Buffs", L"OwnColumns", Setting::Int, &g_modsConfig.ownBuffColumns, 0, 0, 64 },
     { L"Stats", L"Enabled", Setting::Bool, &g_modsConfig.statPrecision, 0 },
     { L"QuestTargets", L"Enabled", Setting::Bool, &g_modsConfig.questTargets, 0 },
     { L"UiScale", L"Max", Setting::Int, &g_modsConfig.uiScaleMax, 130, 130, 400 },
@@ -299,6 +311,10 @@ static void InstallGameMods(HMODULE game) {
     if (g_modsConfig.macroLimit) {
         InstallMacroLimit(game);
     }
+    bool buffs = g_modsConfig.targetBuffColumns || g_modsConfig.ownBuffColumns;
+    if (buffs) {
+        InstallBuffLimit(game);
+    }
     if (g_modsConfig.statPrecision) {
         InstallStatPrecision(game);
     }
@@ -307,6 +323,10 @@ static void InstallGameMods(HMODULE game) {
     }
     if (g_modsConfig.uiScaleMax > 130) {
         InstallUiScale(game);
+    }
+    bool uiXml = InstallUiXml(game);
+    if (buffs) {
+        InstallBuffSlots(game, uiXml);
     }
     LONG error = DetourTransactionCommit();
     ModsLog("game hooks committed: %ld", error);

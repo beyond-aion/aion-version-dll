@@ -190,7 +190,19 @@ struct Vertex {
     float u, v;
 };
 
-static void DrawTexture(IDirect3DDevice9* device, const TextTexture& t, float x, float y) {
+// The game's values of every state the text changes, saved before drawing and put back after it.
+static IDirect3DDevice9* s_savedStateDevice = nullptr;
+static IDirect3DStateBlock9* s_savedState = nullptr;
+
+static void ReleaseSavedState() {
+    if (s_savedState) {
+        s_savedState->Release();
+        s_savedState = nullptr;
+    }
+    s_savedStateDevice = nullptr;
+}
+
+static void SetTextState(IDirect3DDevice9* device, IDirect3DTexture9* texture) {
     device->SetRenderState(D3DRS_ZENABLE, FALSE);
     device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
     device->SetRenderState(D3DRS_STENCILENABLE, FALSE);
@@ -209,7 +221,7 @@ static void DrawTexture(IDirect3DDevice9* device, const TextTexture& t, float x,
     device->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
     device->SetVertexShader(nullptr);
     device->SetPixelShader(nullptr);
-    device->SetTexture(0, t.texture);
+    device->SetTexture(0, texture);
     device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
     device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
     device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
@@ -225,7 +237,29 @@ static void DrawTexture(IDirect3DDevice9* device, const TextTexture& t, float x,
     device->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
     device->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE);
     device->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+}
 
+/// Records a state block holding just the states the text changes: the render target switch resets the viewport, and drawing from
+/// user memory clears stream 0. Capturing and applying it costs far less than a block of the whole device state.
+static bool CreateSavedState(IDirect3DDevice9* device) {
+    ReleaseSavedState();
+    if (FAILED(device->BeginStateBlock())) {
+        return false;
+    }
+    SetTextState(device, nullptr);
+    D3DVIEWPORT9 viewport = { 0, 0, 1, 1, 0, 1 };
+    device->SetViewport(&viewport);
+    device->SetStreamSource(0, nullptr, 0, 0);
+    if (FAILED(device->EndStateBlock(&s_savedState))) {
+        s_savedState = nullptr;
+        return false;
+    }
+    s_savedStateDevice = device;
+    return true;
+}
+
+static void DrawTexture(IDirect3DDevice9* device, const TextTexture& t, float x, float y) {
+    SetTextState(device, t.texture);
     float left = x - 0.5f, top = y - 0.5f, right = left + t.width, bottom = top + t.height;
     Vertex quad[4] = {
         { left, top, 0, 1, 0, 0 },
@@ -236,17 +270,35 @@ static void DrawTexture(IDirect3DDevice9* device, const TextTexture& t, float x,
     device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(Vertex));
 }
 
+struct PingStop {
+    int ms;
+    int r, g, b;
+};
+
+// Green up to 60 ms, yellow at 100 ms, red from 200 ms; orange comes in between.
+static constexpr PingStop PING_STOPS[] = {
+    { 60, 110, 230, 110 },
+    { 100, 240, 210, 80 },
+    { 200, 240, 90, 80 },
+};
+
 static D3DCOLOR PingColor(int ms) {
     if (ms < 0) {
         return D3DCOLOR_XRGB(200, 200, 200);
     }
-    if (ms < 100) {
-        return D3DCOLOR_XRGB(110, 230, 110);
+    const PingStop* stop = PING_STOPS;
+    if (ms <= stop->ms) {
+        return D3DCOLOR_XRGB(stop->r, stop->g, stop->b);
     }
-    if (ms < 200) {
-        return D3DCOLOR_XRGB(240, 210, 80);
+    for (; stop + 1 < std::end(PING_STOPS); stop++) {
+        const PingStop& next = stop[1];
+        if (ms < next.ms) {
+            float t = (float)(ms - stop->ms) / (next.ms - stop->ms);
+            return D3DCOLOR_XRGB((int)(stop->r + (next.r - stop->r) * t + 0.5f), (int)(stop->g + (next.g - stop->g) * t + 0.5f),
+                (int)(stop->b + (next.b - stop->b) * t + 0.5f));
+        }
     }
-    return D3DCOLOR_XRGB(240, 90, 80);
+    return D3DCOLOR_XRGB(stop->r, stop->g, stop->b);
 }
 
 static void DrawOverlay(IDirect3DDevice9* device) {
@@ -272,11 +324,11 @@ static void DrawOverlay(IDirect3DDevice9* device) {
         backBuffer->Release();
         return;
     }
-    IDirect3DStateBlock9* state = nullptr;
-    if (FAILED(device->CreateStateBlock(D3DSBT_ALL, &state))) {
+    if ((s_savedStateDevice != device || !s_savedState) && !CreateSavedState(device)) {
         backBuffer->Release();
         return;
     }
+    s_savedState->Capture();
     IDirect3DSurface9* oldTarget = nullptr;
     device->GetRenderTarget(0, &oldTarget);
     device->SetRenderTarget(0, backBuffer);
@@ -300,8 +352,7 @@ static void DrawOverlay(IDirect3DDevice9* device) {
     if (oldTarget) {
         oldTarget->Release();
     }
-    state->Apply();
-    state->Release();
+    s_savedState->Apply();
     backBuffer->Release();
 }
 
@@ -376,6 +427,7 @@ static HRESULT STDMETHODCALLTYPE zzPresent(IDirect3DDevice9* device, const RECT*
 
 static HRESULT STDMETHODCALLTYPE zzReset(IDirect3DDevice9* device, D3DPRESENT_PARAMETERS* params) {
     s_pingText.Release();
+    ReleaseSavedState();
     return real_Reset(device, params);
 }
 

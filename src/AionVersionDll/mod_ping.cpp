@@ -189,9 +189,10 @@ int GetDisplayedPing() {
     if (!IsInWorld() || s_lastPingMs < 0) {
         return -1;
     }
-    // while an answer is overdue, show how long it has been missing so that a lag spike is visible right away
+    // while an answer is overdue, show how long it has been missing so that a lag spike is visible right away; in steps of
+    // 100 ms, as each new value renders the text again
     if (s_outstanding > 0 && !AnswerArrived()) {
-        int waiting = (int)MillisSince(s_sentAt);
+        int waiting = (int)MillisSince(s_sentAt) / 100 * 100;
         if (waiting > s_lastPingMs) {
             return waiting;
         }

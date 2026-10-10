@@ -4,19 +4,24 @@
 #include <wchar.h>
 #include "detours.h"
 
-// Message types below 73 are chat channels, which go through a text filter first; from 200 on they are GM alerts that also go
-// to the screen center, and debug output.
+// Message types below 73 are chat channels, which go through a text filter first; 203..205 are GM alerts that also go to the screen
+// center, which gets them without the time; from 206 on they are debug output.
 static constexpr int FIRST_SYSTEM_TYPE = 73;
-static constexpr int FIRST_NON_CHAT_TYPE = 200;
+static constexpr int FIRST_ALERT_TYPE = 203;
+static constexpr int FIRST_NON_CHAT_TYPE = 206;
 static constexpr size_t MAX_CHAT_TEXT = 4096;
+static const char GM_ALERT_STYLE[] = "v3_system_gm_alert";
 
 typedef __int64(__fastcall* ChatAddMessage_t)(void* chat, int type, const wchar_t* text);
 typedef __int64(__fastcall* ChatLogWrite_t)(void* chat, const wchar_t* text, __int64 flag);
 typedef __int64(__fastcall* FilterChatText_t)(void* filter, wchar_t* text, int size);
+typedef __int64(__fastcall* ShowAlert_t)(void* alerts, const wchar_t* text, __int64 a3, const char* style, __int64 a5, __int64 a6, __int64 a7,
+    __int64 a8);
 
 static ChatAddMessage_t real_ChatAddMessage = nullptr;
 static ChatLogWrite_t real_ChatLogWrite = nullptr;
 static FilterChatText_t real_FilterChatText = nullptr;
+static ShowAlert_t real_ShowAlert = nullptr;
 
 static thread_local wchar_t s_prefix[64];
 static thread_local size_t s_prefixLength = 0;
@@ -37,7 +42,7 @@ static void MakePrefix() {
 }
 
 static __int64 __fastcall zzChatAddMessage(void* chat, int type, const wchar_t* text) {
-    if (!text || !*text || type >= FIRST_NON_CHAT_TYPE) {
+    if (!text || !*text || type >= FIRST_NON_CHAT_TYPE || (type >= FIRST_ALERT_TYPE && !real_ShowAlert)) {
         return real_ChatAddMessage(chat, type, text);
     }
     MakePrefix();
@@ -78,6 +83,15 @@ static __int64 __fastcall zzChatLogWrite(void* chat, const wchar_t* text, __int6
     return real_ChatLogWrite(chat, text, flag);
 }
 
+/// The alert in the screen center shows a GM alert as it came, without the time.
+static __int64 __fastcall zzShowAlert(void* alerts, const wchar_t* text, __int64 a3, const char* style, __int64 a5, __int64 a6, __int64 a7,
+    __int64 a8) {
+    if (s_prefixLength && text && wcsncmp(text, s_prefix, s_prefixLength) == 0) {
+        text += s_prefixLength;
+    }
+    return real_ShowAlert(alerts, text, a3, style, a5, a6, a7, a8);
+}
+
 /// The function whose code loads the given string.
 static BYTE* FunctionUsing(HMODULE game, const char* text) {
     const void* found = FindBytes(game, text, strlen(text) + 1);
@@ -107,6 +121,19 @@ static FilterChatText_t FindChatFilter(BYTE* addMessage) {
     return nullptr;
 }
 
+/// The alert the message entry point shows GM alerts with: lea r9, [style]; ...; call
+static ShowAlert_t FindShowAlert(HMODULE game) {
+    const void* style = FindBytes(game, GM_ALERT_STYLE, sizeof(GM_ALERT_STYLE));
+    BYTE* lea = style ? FindLeaTo(game, style) : nullptr;
+    for (BYTE* p = lea; p && p < lea + 0x40; p++) {
+        if (p[0] == 0xE8) {
+            BYTE* target = ResolveRip(p + 1, p + 5);
+            return InModule(game, target, 16) ? (ShowAlert_t)target : nullptr;
+        }
+    }
+    return nullptr;
+}
+
 void InstallChatTime(HMODULE game) {
     // 5.x clients can show the time themselves, set per chat tab
     static const wchar_t BUILT_IN_TIME[] = L"[color:(%s);%f %f %f] %s";
@@ -115,12 +142,16 @@ void InstallChatTime(HMODULE game) {
         return;
     }
     // the message entry point also shows GM alerts on screen, the log writer formats the Chat.log lines
-    real_ChatAddMessage = (ChatAddMessage_t)FunctionUsing(game, "v3_system_gm_alert");
+    real_ChatAddMessage = (ChatAddMessage_t)FunctionUsing(game, GM_ALERT_STYLE);
     real_ChatLogWrite = (ChatLogWrite_t)FunctionUsing(game, "%.4d.%.2d.%.2d %.2d:%.2d:%.2d : %s \n");
     real_FilterChatText = real_ChatAddMessage ? FindChatFilter((BYTE*)real_ChatAddMessage) : nullptr;
-    ModsLog("chat time: add=%p log=%p filter=%p", real_ChatAddMessage, real_ChatLogWrite, real_FilterChatText);
+    real_ShowAlert = real_ChatAddMessage ? FindShowAlert(game) : nullptr;
+    ModsLog("chat time: add=%p log=%p filter=%p alert=%p", real_ChatAddMessage, real_ChatLogWrite, real_FilterChatText, real_ShowAlert);
     if (!real_ChatAddMessage) {
         return;
+    }
+    if (real_ShowAlert) {
+        DetourAttach(&(PVOID&)real_ShowAlert, zzShowAlert);
     }
     DetourAttach(&(PVOID&)real_ChatAddMessage, zzChatAddMessage);
     if (real_ChatLogWrite) {
