@@ -52,6 +52,9 @@ void InstallXigncodeFix();
 void InstallShaderFix();
 void Install64BitStackFix();
 void InstallFullscreenFix();
+#if !defined(_M_AMD64)
+void InstallChatLogFix();
+#endif
 
 static decltype(SetWindowLongA)* real_SetWindowLongA = SetWindowLongA;
 static LONG WINAPI zzSetWindowLongA(_In_ HWND hWnd, _In_ int nIndex, _In_ LONG dwNewLong) {
@@ -95,6 +98,8 @@ static void InstallPatch(HINSTANCE self) {
 #if defined(_M_AMD64)
     Install64BitStackFix();
     InstallMods(self);
+#else
+    InstallChatLogFix();
 #endif
     InstallFullscreenFix();
     DetourTransactionCommit();

@@ -11,6 +11,7 @@ Fixes:
 - Enables all graphics options sliders (shadows, water quality, etc) which are otherwise disabled at high resolutions.
 - Fixes a stretched picture and a misplaced mouse cursor on screens larger than 2560x1920 (like 3840x2160) in 4.x and 5.x clients, which cut the full screen resolution they save down to that size on the next start.
 - Fixes color tags in 64-bit 4.6 clients, which showed only the first 5 characters of their text.
+- Fixes question marks in `Chat.log`: the clients wrote it in the code page of the current keyboard layout, so letters outside it (like Cyrillic with an English layout) were lost, and cut lines at 255 bytes. Lines are now written in UTF-8, with milliseconds in the time. 5.x clients also no longer delete the log when they start.
 - [DXVK support](https://github.com/doitsujin/dxvk) - DXVK can improve performance and frame times.
 
 ## Client mods (64-bit only)
