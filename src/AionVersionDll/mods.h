@@ -77,10 +77,6 @@ bool IsInWorld();
 
 void InstallMods(HINSTANCE self);
 void InstallChatTime(HMODULE game);
-/// The message without the time the chat time mod put in front of it.
-const wchar_t* SkipChatTime(const wchar_t* text);
-/// Writes the lines of Chat.log as UTF-8 with milliseconds and keeps the chat time out of them.
-void InstallChatLogFix(HMODULE game);
 void InstallColorTagFix(HMODULE game);
 void InstallTimeouts(HMODULE game);
 void InstallPing(HMODULE game);

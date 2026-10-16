@@ -1,4 +1,5 @@
 #include "mods.h"
+#include "chat_log_fix.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <wchar.h>
@@ -73,7 +74,8 @@ static __int64 __fastcall zzFilterChatText(void* filter, wchar_t* text, int size
     return result;
 }
 
-const wchar_t* SkipChatTime(const wchar_t* text) {
+/// Chat.log has its own date and time on every line, so the time is kept out of it.
+static const wchar_t* SkipChatTime(const wchar_t* text) {
     if (s_prefixLength && text && wcsncmp(text, s_prefix, s_prefixLength) == 0) {
         text += s_prefixLength;
     }
@@ -150,6 +152,7 @@ void InstallChatTime(HMODULE game) {
         DetourAttach(&(PVOID&)real_ShowAlert, zzShowAlert);
     }
     DetourAttach(&(PVOID&)real_ChatAddMessage, zzChatAddMessage);
+    SetChatLogFilter(SkipChatTime);
     if (real_FilterChatText) {
         DetourAttach(&(PVOID&)real_FilterChatText, zzFilterChatText);
     }
