@@ -62,6 +62,7 @@ static int RowsFor(int columns, int count) {
 static bool s_ownWindowsReady = false;
 static bool s_ownGridReady = false;
 static bool s_targetWindowReady = false;
+static constexpr int CLIENT_TARGET_COLUMNS = 10;
 // rows the client builds the own buff and debuff windows with
 static int s_ownRows[2] = { OWN_ROWS, OWN_ROWS };
 
@@ -102,6 +103,109 @@ static void EditTargetWindow(XmlNode& dialog) {
     int count = s_targetWindowReady ? TargetCount() : CLIENT_EFFECTS;
     AddSlots(dialog, L"buff_item1", L"buff_item", 2, count);
     AddSlots(dialog, L"debuff_item1", L"debuff_item", 2, count);
+}
+
+// --- the target's buffs below the target of the target in 5.x ---
+
+// 5.x centers the target's buffs below the target and moves them down only a little when the target of the target shows, which
+// sits to the right of the first row, so rows wider than the client's run into it. While it shows, 4.x has the rows below it, this
+// far from its bottom in UI units.
+static constexpr double ROWS_BELOW_ASSIST_GAP = 6;
+// 5.x places the rows as 4.x does, below the frame of the target, but its frames end higher than the bars drawn in them, so the
+// rows sit this much higher in UI units and touch the large bars of epic monsters
+static constexpr double ROWS_DROP_5X = 19;
+// the height of the target of the target in UI units, in the dialog files of every version
+static constexpr double ASSIST_HEIGHT = 47;
+
+/// A window's frame in screen pixels: x, y, width, height.
+struct WindowRect {
+    double x, y, width, height;
+};
+
+typedef __int64(__fastcall* SetWindowRect_t)(BYTE* window, WindowRect* rect);
+typedef __int64(__fastcall* PlaceWindow_t)(BYTE* window, WindowRect* rect);
+typedef int(__fastcall* IsShown_t)(BYTE* window);
+static SetWindowRect_t real_SetWindowRect = nullptr;
+static PlaceWindow_t real_PlaceTargetBuffs = nullptr;
+static int s_windowRectAt = 0;
+static void* s_assistVtable = nullptr;
+static BYTE* s_assistWindow = nullptr;
+// the method the placement asks whether the target of the target shows
+static DWORD s_isShownAt = 0;
+
+static __int64 __fastcall zzSetWindowRect(BYTE* window, WindowRect* rect) {
+    __int64 result = real_SetWindowRect(window, rect);
+    if (*(void**)window == s_assistVtable) {
+        s_assistWindow = window;
+    }
+    return result;
+}
+
+/// Puts the rows as far below the target as 4.x does, and below the target of the target while it shows.
+static __int64 __fastcall zzPlaceTargetBuffs(BYTE* window, WindowRect* rect) {
+    static double placed = 0;
+    double given = rect ? rect->y : 0;
+    __int64 result = real_PlaceTargetBuffs(window, rect);
+    BYTE* assist = s_assistWindow;
+    const WindowRect* frame = assist ? (const WindowRect*)(assist + s_windowRectAt) : nullptr;
+    // without a target the client leaves the frame as it was, which can be the one placed here before
+    if (!rect || !frame || frame->height <= 0 || (rect->y == given && given == placed)) {
+        return result;
+    }
+    // the frame of the target of the target has its size from the start, shown or not
+    double scale = frame->height / ASSIST_HEIGHT;
+    rect->y += ROWS_DROP_5X * scale;
+    if ((*(IsShown_t**)assist)[s_isShownAt / 8](assist)) {
+        rect->y = max(rect->y, frame->y + frame->height + ROWS_BELOW_ASSIST_GAP * scale);
+    }
+    placed = rect->y;
+    return result;
+}
+
+/// The setter of a window's frame stores it at +68h and lets the window place it before and react after, two virtual calls one
+/// slot apart: call [reg+480h]; ...; call [reg+488h]. Both windows share it; the target's buffs place themselves below the target.
+static void InstallRowsBelowAssist(HMODULE game, BYTE* targetBuffVtable) {
+    static constexpr DWORD PLACE = 0x480;
+    static constexpr DWORD REACT = 0x488;
+    BYTE* assistVtable = FindVtable(game, ".?AVDlgTargetAssist@@");
+    int slot = -1;
+    for (int i = 40; assistVtable && targetBuffVtable && i < 80 && slot < 0; i++) {
+        BYTE* setter = ((BYTE**)targetBuffVtable)[i];
+        if (setter != ((BYTE**)assistVtable)[i] || !InModule(game, setter, 1)) {
+            continue;
+        }
+        BYTE* end = FunctionBodyEnd(setter, 0x1000);
+        bool place = false, react = false;
+        for (BYTE* p = setter; p + 6 <= end; p++) {
+            if (p[0] == 0xFF && (p[1] & 0xF8) == 0x90 && (p[1] & 7) != 4) {
+                place |= *(DWORD*)(p + 2) == PLACE;
+                react |= *(DWORD*)(p + 2) == REACT;
+            }
+        }
+        slot = place && react ? i : -1;
+    }
+    BYTE* placeBuffs = slot >= 0 ? ((BYTE**)targetBuffVtable)[PLACE / 8] : nullptr;
+    // a placement of their own, not the one the target of the target has
+    bool own = placeBuffs && placeBuffs != ((BYTE**)assistVtable)[PLACE / 8] && InModule(game, placeBuffs, 1);
+    // the placement asks the target of the target whether it shows: call [reg+isShown]
+    for (BYTE* p = placeBuffs; own && p < placeBuffs + 0x100 && !s_isShownAt; p++) {
+        if (p[0] == 0xFF && (p[1] & 0xF8) == 0x90 && (p[1] & 7) != 4) {
+            s_isShownAt = *(DWORD*)(p + 2);
+        } else if (p[0] == 0xFF && (p[1] & 0xF8) == 0x50 && (p[1] & 7) != 4) {
+            s_isShownAt = p[2];
+        }
+    }
+    ModsLog("buffs: target rows below the target of the target, frame setter slot %d, placement %p, shown +%X", slot, own ? placeBuffs : nullptr,
+        s_isShownAt);
+    if (!own || !s_isShownAt) {
+        return;
+    }
+    s_assistVtable = assistVtable;
+    s_windowRectAt = 0x68;
+    real_SetWindowRect = (SetWindowRect_t)((BYTE**)targetBuffVtable)[slot];
+    real_PlaceTargetBuffs = (PlaceWindow_t)placeBuffs;
+    DetourAttach(&(PVOID&)real_SetWindowRect, zzSetWindowRect);
+    DetourAttach(&(PVOID&)real_PlaceTargetBuffs, zzPlaceTargetBuffs);
 }
 
 /// The own windows get the slots of their kind up to the configured count.
@@ -1162,8 +1266,12 @@ void InstallBuffSlots(HMODULE game, bool uiXml) {
         ModsLog("buffs: target window constructor not found");
         return;
     }
-    DWORD columns = g_modsConfig.targetBuffColumns ? g_modsConfig.targetBuffColumns : 10;
-    DWORD rows = RowsFor(columns, s_targetWindowReady ? TargetCount() : ClientSlots(game));
+    DWORD columns = g_modsConfig.targetBuffColumns ? g_modsConfig.targetBuffColumns : CLIENT_TARGET_COLUMNS;
+    int clientSlots = ClientSlots(game);
+    if (clientSlots > CLIENT_EFFECTS && columns > CLIENT_TARGET_COLUMNS) {
+        InstallRowsBelowAssist(game, vtable);
+    }
+    DWORD rows = RowsFor(columns, s_targetWindowReady ? TargetCount() : clientSlots);
     if (!g_modsConfig.targetBuffColumns && !s_targetWindowReady) {
         return;
     }
