@@ -2,17 +2,13 @@
 Fixes and optional mods for the Aion game client, loaded as `version.dll` next to the client.
 
 Fixes:
-- Allows the game client to connect to non-official game server IPs (prevents the error message "No game server is available to the authorization server (6)").
-- Fixes the camera movement issue on Windows 10/11 (introduced by the Fall Creators Update 2017) by turning the camera with raw mouse input, which also keeps the camera, movement and skill keys working while Bandicam captures the client window.
-- Fixes an issue with launching the 64-bit client on Windows 11 24H2 and later versions.
-- Fixes an issue with launching the game client on systems with 32 or more logical processors.
-- Fixes the `XignCode Error` when launching v5.x+ game clients (disables XignCode entirely).
-- Fixes black flickering that occurs when using the game's High Quality graphics engine on Nvidia graphics cards and similar issues on AMD cards when using DXVK on Windows.
-- Enables all graphics options sliders (shadows, water quality, etc) which are otherwise disabled at high resolutions.
-- Fixes a stretched picture and a misplaced mouse cursor on screens larger than 2560x1920 (like 3840x2160) in 4.x and 5.x clients, which cut the full screen resolution they save down to that size on the next start.
-- Fixes color tags in 64-bit 4.6 clients, which showed only the first 5 characters of their text.
-- Fixes question marks in `Chat.log`: the clients wrote it in the code page of the current keyboard layout, so letters outside it (like Cyrillic with an English layout) were lost, and cut lines at 255 bytes. Lines are now written in UTF-8, with milliseconds in the time. 5.x clients also no longer delete the log when they start.
-- [DXVK support](https://github.com/doitsujin/dxvk) - DXVK can improve performance and frame times.
+- **Connection:** connects to non-official game server IPs (no "No game server is available to the authorization server (6)").
+- **Start:** launches the 64-bit client on Windows 11 24H2 and later, on systems with 32 or more logical processors, and 5.x clients without XignCode.
+- **Camera:** turns by raw mouse input, so it no longer jumps on Windows 10/11 and keeps working, together with the keys, while Bandicam captures the window.
+- **PrintScreen:** no longer opens the Snipping Tool over the game's own screenshot.
+- **Graphics:** no black flickering with the High Quality engine (Nvidia, and AMD with DXVK), all graphics sliders available at high resolutions, and no stretched picture or misplaced cursor on screens larger than 2560x1920.
+- **Text:** color tags in 64-bit 4.6 clients show their whole text, and `Chat.log` is written in UTF-8 with milliseconds, without question marks for letters outside the keyboard layout or lines cut at 255 bytes.
+- [DXVK](https://github.com/doitsujin/dxvk) support, which can improve performance and frame times.
 
 ## Client mods (64-bit only)
 Optional additions to the game client, all of them off until turned on in `mods.ini`:
