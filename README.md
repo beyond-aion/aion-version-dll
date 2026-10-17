@@ -3,7 +3,7 @@ Fixes and optional mods for the Aion game client, loaded as `version.dll` next t
 
 Fixes:
 - Allows the game client to connect to non-official game server IPs (prevents the error message "No game server is available to the authorization server (6)").
-- Fixes the camera movement issue on Windows 10/11 (introduced by the Fall Creators Update 2017).
+- Fixes the camera movement issue on Windows 10/11 (introduced by the Fall Creators Update 2017) by turning the camera with raw mouse input, which also keeps the camera, movement and skill keys working while Bandicam captures the client window.
 - Fixes an issue with launching the 64-bit client on Windows 11 24H2 and later versions.
 - Fixes an issue with launching the game client on systems with 32 or more logical processors.
 - Fixes the `XignCode Error` when launching v5.x+ game clients (disables XignCode entirely).
