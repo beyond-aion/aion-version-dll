@@ -6,6 +6,9 @@
 
 #pragma warning(disable: 28159)
 
+void UpdatePrintScreenHotKey(HWND window, bool foreground);
+bool TranslatePrintScreen(MSG* msg);
+
 // The client turns the camera while a mouse button is held by putting the cursor back to the screen centre after every mouse move and turning
 // by how far the next WM_MOUSEMOVE lands from it. Since the Windows 10 Fall Creators Update the move messages after SetCursorPos are often
 // still relative to the old cursor position, which makes the camera jump, and while Bandicam captures the window SetCursorPos fails
@@ -236,8 +239,12 @@ static BOOL WINAPI zzGetKeyboardState(_Out_writes_(256) PBYTE lpKeyState) {
 }
 
 static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UINT wMsgFilterMin, _In_ UINT wMsgFilterMax, _In_ UINT wRemoveMsg) {
-    if (OnWindowThread() && GetForegroundWindow() != s_window) {
-        memset(s_keysDown, 0, sizeof(s_keysDown)); // the key ups go elsewhere
+    if (OnWindowThread()) {
+        bool foreground = GetForegroundWindow() == s_window;
+        if (!foreground) {
+            memset(s_keysDown, 0, sizeof(s_keysDown)); // the key ups go elsewhere
+        }
+        UpdatePrintScreenHotKey(s_window, foreground);
     }
     if (s_turning && OnWindowThread() && (!AnyButtonHeld() || GetForegroundWindow() != s_window)) {
         StopTurning();
@@ -263,11 +270,12 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
         if (lpMsg->message == WM_INPUT && s_rawInput) {
             OnRawInput((HRAWINPUT)lpMsg->lParam);
         }
-        if (s_turning && lpMsg->message == WM_MOUSEMOVE && lpMsg->hwnd == s_window) {
-            // positions of the real cursor, which stays put
+        // positions of the real cursor, which stays put while turning
+        bool drop = s_turning && lpMsg->message == WM_MOUSEMOVE && lpMsg->hwnd == s_window || !TranslatePrintScreen(lpMsg);
+        if (drop) {
             if (!(wRemoveMsg & PM_REMOVE)) {
                 MSG dropped;
-                real_PeekMessageA(&dropped, lpMsg->hwnd, WM_MOUSEMOVE, WM_MOUSEMOVE, PM_REMOVE);
+                real_PeekMessageA(&dropped, lpMsg->hwnd, lpMsg->message, lpMsg->message, PM_REMOVE);
             }
             continue;
         }

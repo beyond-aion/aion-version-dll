@@ -216,6 +216,7 @@
     <ClCompile Include="fullscreen_fix.cpp" />
     <ClCompile Include="ip_fix.cpp" />
     <ClCompile Include="module_load.cpp" />
+    <ClCompile Include="printscreen_fix.cpp" />
     <ClCompile Include="mods.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
