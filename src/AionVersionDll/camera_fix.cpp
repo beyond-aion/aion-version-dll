@@ -8,6 +8,13 @@
 
 void UpdatePrintScreenHotKey(HWND window, bool foreground);
 bool TranslatePrintScreen(MSG* msg);
+void InstallCameraDiag();
+double CameraDiagNow();
+void CameraDiagTrace(const char* format, ...);
+void CameraDiagDump(const char* format, ...);
+void CameraDiagLine(const char* format, ...);
+static double s_lastWarpAt;
+static int s_warpCount;
 
 // The client turns the camera while a mouse button is held by putting the cursor back to the screen centre after every mouse move and turning
 // by how far the next WM_MOUSEMOVE lands from it. Since the Windows 10 Fall Creators Update the move messages after SetCursorPos are often
@@ -102,9 +109,16 @@ static void StartTurning(int x, int y) {
     s_pinned = cursor;
     s_releasedMidTurn = false;
     s_turning = true;
+    s_lastWarpAt = CameraDiagNow();
+    s_warpCount = 0;
+    RECT client = {};
+    GetClientRect(s_window, &client);
+    CameraDiagTrace("start turning at %d,%d, real cursor %ld,%ld, speed %.3f, pinned %d, client %ldx%ld", x, y, cursor.x, cursor.y, s_speed,
+        s_clipped, client.right, client.bottom);
 }
 
-static void StopTurning() {
+static void StopTurning(const char* why) {
+    CameraDiagTrace("stop turning (%s), virtual %ld,%ld, warp %ld,%ld, %d warps", why, s_virtual.x, s_virtual.y, s_warp.x, s_warp.y, s_warpCount);
     s_turning = false;
     s_warpPending = s_movePending = false;
     if (s_clipped) {
@@ -137,7 +151,10 @@ static void OnRawInput(HRAWINPUT handle) {
         return;
     }
     LONG dx, dy;
-    if (input.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) {
+    LONG rawX = input.data.mouse.lLastX, rawY = input.data.mouse.lLastY;
+    bool absolute = (input.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) != 0;
+    if (absolute) {
+        CameraDiagLine("absolute mouse input %ld,%ld flags %X", rawX, rawY, input.data.mouse.usFlags);
         // the position has been through the pointer speed already
         POINT at = AbsolutePosition(input.data.mouse);
         bool known = s_haveAbsolute;
@@ -165,6 +182,10 @@ static void OnRawInput(HRAWINPUT handle) {
         s_virtual.y += dy;
         s_movePending = true;
     }
+    CameraDiagTrace("%s %ld,%ld -> delta %ld,%ld -> virtual %ld,%ld", absolute ? "absolute" : "raw", rawX, rawY, dx, dy, s_virtual.x, s_virtual.y);
+    if (abs(dx) + abs(dy) > 150) {
+        CameraDiagDump("%s JUMP %ld,%ld", absolute ? "ABSOLUTE" : "RAW", dx, dy);
+    }
 }
 
 static MSG MakeMouseMove(POINT at) {
@@ -187,6 +208,16 @@ static BOOL WINAPI zzSetCursorPos(_In_ int X, _In_ int Y) {
         }
         s_releasedMidTurn = false;
         if (s_turning) {
+            double now = CameraDiagNow();
+            CameraDiagTrace("warp %d,%d (virtual was %ld,%ld, %.1f ms since the last)", X, Y, s_virtual.x, s_virtual.y, now - s_lastWarpAt);
+            if (s_warpCount && (s_warp.x != X || s_warp.y != Y)) {
+                CameraDiagDump("WARP MOVED to %d,%d from %ld,%ld", X, Y, s_warp.x, s_warp.y);
+            }
+            if (s_warpCount && now - s_lastWarpAt > 200) {
+                CameraDiagDump("STALL %.0f ms without the cursor put back", now - s_lastWarpAt);
+            }
+            s_lastWarpAt = now;
+            s_warpCount++;
             // the client reads where the cursor went from the next mouse move, as Windows used to send one
             s_virtual = { X, Y };
             s_warp = s_virtual;
@@ -194,6 +225,10 @@ static BOOL WINAPI zzSetCursorPos(_In_ int X, _In_ int Y) {
             s_movePending = false;
             return TRUE;
         }
+    }
+    if (FromGame(_ReturnAddress()) && OnWindowThread()) {
+        CameraDiagTrace("game SetCursorPos %d,%d not turning (raw input %d, absolute %d, capture %d, buttons %d)", X, Y, s_rawInput, s_haveAbsolute,
+            GetCapture() == s_window, AnyButtonHeld());
     }
     return real_SetCursorPos(X, Y);
 }
@@ -208,8 +243,10 @@ static BOOL WINAPI zzGetCursorPos(_Out_ LPPOINT lpPoint) {
 
 static BOOL WINAPI zzReleaseCapture() {
     if (s_turning && FromGame(_ReturnAddress())) {
-        StopTurning();
+        StopTurning("capture released");
         if (AnyButtonHeld()) {
+            CameraDiagTrace("capture released with a button held, real cursor put at %ld,%ld, pinned was %ld,%ld", s_warp.x, s_warp.y, s_pinned.x,
+                s_pinned.y);
             real_SetCursorPos(s_warp.x, s_warp.y);
             s_releasedMidTurn = true;
         }
@@ -281,7 +318,7 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
         UpdatePrintScreenHotKey(s_window, foreground);
     }
     if (s_turning && OnWindowThread() && (!AnyButtonHeld() || GetForegroundWindow() != s_window)) {
-        StopTurning();
+        StopTurning(AnyButtonHeld() ? "focus lost" : "buttons up");
     }
     if (s_releasedMidTurn && OnWindowThread() && !AnyButtonHeld()) {
         s_releasedMidTurn = false;
@@ -292,6 +329,17 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
         if (s_turning && movesWanted && (s_warpPending || s_movePending)) {
             *lpMsg = MakeMouseMove(s_warpPending ? s_warp : s_virtual);
             if (wRemoveMsg & PM_REMOVE) {
+                RECT client = {};
+                GetClientRect(s_window, &client);
+                int cx = GET_X_LPARAM(lpMsg->lParam), cy = GET_Y_LPARAM(lpMsg->lParam);
+                LONG distance = abs(lpMsg->pt.x - s_warp.x) + abs(lpMsg->pt.y - s_warp.y);
+                CameraDiagTrace("move %s %ld,%ld client %d,%d (%ld from the warp)", s_warpPending ? "warp" : "virtual", lpMsg->pt.x, lpMsg->pt.y, cx, cy,
+                    distance);
+                if (cx < 0 || cy < 0 || cx >= client.right || cy >= client.bottom) {
+                    CameraDiagDump("OUTSIDE client %d,%d in %ldx%ld", cx, cy, client.right, client.bottom);
+                } else if (distance > client.bottom / 4) {
+                    CameraDiagDump("DRIFT %ld px from the warp", distance);
+                }
                 if (s_warpPending) {
                     s_warpPending = false;
                 } else {
@@ -320,6 +368,13 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
         if (wRemoveMsg & PM_REMOVE) {
             if (lpMsg->hwnd == s_window) {
                 TrackKey(lpMsg);
+                if (lpMsg->message == WM_KEYDOWN && lpMsg->wParam == VK_PAUSE) {
+                    CameraDiagDump("USER MARK (Pause)");
+                }
+                if (lpMsg->message == WM_MOUSEMOVE && AnyButtonHeld()) {
+                    CameraDiagTrace("real move client %d,%d pt %ld,%ld with a button held, not turning", GET_X_LPARAM(lpMsg->lParam),
+                        GET_Y_LPARAM(lpMsg->lParam), lpMsg->pt.x, lpMsg->pt.y);
+                }
             }
         }
         return result;
@@ -350,6 +405,10 @@ void InstallOrUpdateCameraFix(HWND hWnd) {
     }
     RAWINPUTDEVICE mouse = { 0x01, 0x02, 0, hWnd }; // generic desktop, mouse
     s_rawInput = RegisterRawInputDevices(&mouse, 1, sizeof(mouse)) != FALSE;
+    InstallCameraDiag();
+    RECT client = {};
+    GetClientRect(hWnd, &client);
+    CameraDiagLine("window %p, client %ldx%ld, raw input %d", hWnd, client.right, client.bottom, s_rawInput);
     s_windowThread = GetWindowThreadProcessId(hWnd, nullptr);
     s_window = hWnd;
 }
