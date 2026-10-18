@@ -1,4 +1,5 @@
 #include "mods.h"
+#include <algorithm>
 #include <map>
 
 /// The macro window creates one list slot per allowed macro when it opens; macros beyond them would not show:
@@ -23,12 +24,16 @@ static void MakeMacroSlots(HMODULE game, int oldLimit) {
 /// and in the macro window (to disable the add button). Both compare the same field: cmp qword ptr [reg+count], limit
 void InstallMacroLimit(HMODULE game) {
     std::map<DWORD, std::vector<BYTE*>> byField;
-    for (const char* pattern : { "48 83 ?? ?? ?? 00 00 0C", "49 83 ?? ?? ?? 00 00 0C", "48 83 ?? ?? ?? 00 00 18", "49 83 ?? ?? ?? 00 00 18" }) {
-        for (BYTE* p : FindAllPatterns(game, pattern)) {
-            if ((p[2] & 0xF8) == 0xB8 && p[2] != 0xBC) {
-                byField[*(DWORD*)(p + 3) | (DWORD)p[7] << 24].push_back(p);
-            }
+    // 48/49 83 ?? ?? ?? 00 00 0C/18, in one pass; the sites of a field in the order of 48 0C, 49 0C, 48 18, 49 18
+    std::vector<BYTE*> compares;
+    for (BYTE* p : FindAllPatterns(game, "83 ?? ?? ?? 00 00")) {
+        if ((p[-1] == 0x48 || p[-1] == 0x49) && (p[6] == 0x0C || p[6] == 0x18) && (p[1] & 0xF8) == 0xB8 && p[1] != 0xBC) {
+            compares.push_back(p - 1);
         }
+    }
+    std::stable_sort(compares.begin(), compares.end(), [](BYTE* a, BYTE* b) { return (a[7] == 0x18) * 2 + (a[0] == 0x49) < (b[7] == 0x18) * 2 + (b[0] == 0x49); });
+    for (BYTE* p : compares) {
+        byField[*(DWORD*)(p + 3) | (DWORD)p[7] << 24].push_back(p);
     }
     std::vector<BYTE*> found;
     for (auto& entry : byField) {

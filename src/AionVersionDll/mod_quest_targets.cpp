@@ -1,4 +1,5 @@
 #include "mods.h"
+#include "module_load.h"
 #include <map>
 #include <stdio.h>
 #include <unordered_map>
@@ -204,7 +205,8 @@ static void InstallQuestTargetEffect(HMODULE game) {
 
 /// The function holding an instruction that loads the given address through a RIP-relative mov or lea.
 static BYTE* FunctionLoading(HMODULE game, const void* target) {
-    for (BYTE* c = (BYTE*)game; InModule(game, c, 8); c++) {
+    BYTE* end = (BYTE*)game + ModuleImageSize(game) - 8;
+    for (BYTE* c = (BYTE*)game; c <= end; c++) {
         if ((c[0] == 0x48 || c[0] == 0x4C) && (c[1] == 0x8B || c[1] == 0x8D) && (c[2] & 0xC7) == 0x05 && ResolveRip(c + 3, c + 7) == target) {
             return FunctionStart(c);
         }

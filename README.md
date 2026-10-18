@@ -20,6 +20,8 @@ Optional additions to the game client, all of them off until turned on in `mods.
 - **Stats:** attack, casting and movement speed in the character window with as many decimals as they have (up to three).
 - **Quest targets (4.6, 4.8):** monsters a quest in progress needs (to kill or to loot) get the icon of the quest kind in front of their name, the same one the quest window shows, as 5.x clients do by themselves, and on 4.6 gatherable objects it needs get the green glow later clients show. The client's own quest monster data decides which ones.
 - **Multi client:** more than two clients at once. Without it, a third client closes the other two when it starts.
+- **Faster loading (4.6, 4.8, 5.8):** `LoadingMode=1` gets to the login screen several times sooner and closes the client window at once. The client skips the DirectX diagnostic report, measures the processor clock once instead of on every core, no longer waits before checking for another closing client and starts as with `-ncg`. String compares and formatting, table and token lookups, zlib (replaced by libdeflate) and, in 4.6, the packer's stubs in front of every call of CrySystem to other modules no longer slow the loading down, and 5.x clients rebuild their table dump several times faster. A second client of the same folder keeps the shader cache and the table dump. `LoadingMode=2` also skips the logos before the login screen and the picture after quitting. The code of aion.bin, which checks itself, stays unchanged.
+- **mimalloc (4.6, 4.8, 5.8):** `Mimalloc=1` replaces the memory allocators of CrySystem with mimalloc for the whole session, which loads faster still, for 600 MB to 1 GB more memory.
 - **UI scale (5.x):** the UI scale option goes past 130 %, up to the screen size relative to 1280x960 (225 % on 3840x2160), and large fonts no longer lose the tails of letters like g and y.
 
 The mods find their places in the client by content rather than by fixed addresses, so they work with different client versions (4.6, 4.8 and 5.8 have been verified). A mod that finds nothing to change simply stays off, which `mods.log` next to `version.dll` shows, together with any problems in `mods.ini`.
@@ -27,7 +29,7 @@ The mods find their places in the client by content rather than by fixed address
 The ping text uses the font of the [DXVK](https://github.com/doitsujin/dxvk) HUD (zlib/libpng license, see `dxvk_hud_font.h`), so it looks the same as the DXVK frame rate next to it.
 
 ## Building
-This project depends on [MS Detours](https://github.com/Microsoft/Detours). Since it's served via NuGet, you should be able to build the project straight away. The 64-bit build copies `mods.ini` next to `version.dll`.
+This project depends on [MS Detours](https://github.com/Microsoft/Detours). Since it's served via NuGet, you should be able to build the project straight away. [libdeflate](https://github.com/ebiggers/libdeflate) 1.26 and [mimalloc](https://github.com/microsoft/mimalloc) 3.5.3 (both MIT, see `src/libdeflate/COPYING` and `src/mimalloc/LICENSE`) are included as source. The 64-bit build copies `mods.ini` next to `version.dll`.
 
 ## Installation
 1. Copy each `version.dll` to the respective `bin32` or `bin64` folder within the game root directory.

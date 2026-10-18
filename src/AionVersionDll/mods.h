@@ -24,7 +24,11 @@ struct ModsConfig {
     bool multiClient;
     int uiScaleMax; // percent
     int largeGlyphFrom; // pixel height
+    int fastStart; // FAST_START_*
+    bool mimalloc;
 };
+
+enum { FAST_START_OFF, FAST_START_SHOW_LOGO, FAST_START_FULL };
 
 extern wchar_t g_modsIniPath[MAX_PATH];
 
@@ -47,6 +51,9 @@ bool InModule(HMODULE module, const void* address, size_t size);
 /// Finds a RIP-relative lea (any register) that loads target.
 BYTE* FindLeaTo(HMODULE module, const void* target);
 
+/// All RIP-relative leas (any register) that load target, in address order.
+std::vector<BYTE*> FindAllLeasTo(HMODULE module, const void* target);
+
 /// Finds a direct call (E8 rel32) to target.
 BYTE* FindCallTo(HMODULE module, const void* target);
 
@@ -59,6 +66,12 @@ BYTE* FunctionEnd(const void* start);
 /// End of the whole body of the function starting at start, which can be split into chained unwind ranges: where the code of another
 /// function begins, at most maxSize bytes on.
 BYTE* FunctionBodyEnd(BYTE* start, size_t maxSize);
+
+/// Whether a packer sent the calls of the module to imported functions through stubs of its own.
+bool HasImportStubs(HMODULE module);
+
+/// Points the calls a packer sent through stubs of its own back at the functions they call. Starts threads, so not under the loader lock.
+void RestoreImportCalls(HMODULE module);
 
 /// Overwrites code or read-only data.
 bool PatchMemory(void* at, const void* value, size_t size);
@@ -107,6 +120,12 @@ void InstallStatPrecision(HMODULE game);
 void InstallQuestTargets(HMODULE game);
 void InstallUiScale(HMODULE game);
 void InstallMultiClient(HMODULE game);
+/// The start-up shortcuts outside Game.dll; must be called inside an open Detours transaction.
+void InstallFastStart();
+void InstallSkipLogo(HMODULE game);
+void InstallFastLoad(HMODULE game);
+/// mimalloc in place of the allocators of CrySystem.
+void InstallMimalloc();
 void InstallGlyphCells(HMODULE cryFont);
 void InstallOverlay();
 /// Hooks the device methods again when something else wrote over them; called once a frame.

@@ -1,4 +1,5 @@
 #include "mods.h"
+#include "module_load.h"
 #include <math.h>
 #include "detours.h"
 
@@ -119,8 +120,9 @@ static int RedirectFunction(HMODULE game, BYTE* function) {
 static int DropAttackDelayIncrement(HMODULE game, const void* widgetName) {
     static const BYTE NOP2[] = { 0x66, 0x90 };
     int changed = 0;
-    for (BYTE* c = (BYTE*)game + 0x20; InModule(game, c, 0x40); c++) {
-        if ((c[0] != 0x48 && c[0] != 0x4C) || c[1] != 0x8D || (c[2] & 0xC7) != 0x05 || ResolveRip(c + 3, c + 7) != widgetName) {
+    BYTE* end = (BYTE*)game + ModuleImageSize(game) - 0x40;
+    for (BYTE* c : FindAllLeasTo(game, widgetName)) {
+        if (c < (BYTE*)game + 0x20 || c > end) {
             continue;
         }
         for (BYTE* p = c - 0x20; p < c + 0x40; p++) {

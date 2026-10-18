@@ -1,6 +1,10 @@
 EXTERN AppendQuestIcon: PROC
 EXTERN g_questIconResume: QWORD
 EXTERN g_questIconLines: QWORD
+EXTERN QuestTokenIndex: PROC
+EXTERN g_questTokenTable: QWORD
+EXTERN g_questTokenEnd: QWORD
+EXTERN g_questTokenLoop: QWORD
 
 .code
 
@@ -89,5 +93,37 @@ QuestIconStubR14Rbp PROC
   POP_VOLATILE
   jmp qword ptr [g_questIconResume]
 QuestIconStubR14Rbp ENDP
+
+; Entered by a jump in place of lea r12, <tokens>; lea r14, <end> before the token loop of Quest::Set, with the attribute name in r13
+; and ebx at 0. Starts the loop at the token QuestTokenIndex gives, which compares equal at once, with ebx counted up to it.
+QuestTokenStub PROC
+  push rax
+  push rcx
+  push rdx
+  push r8
+  push r9
+  push r10
+  push r11
+  push rbp
+  mov rbp, rsp
+  and rsp, -16
+  sub rsp, 32
+  mov rcx, r13
+  call QuestTokenIndex
+  mov rsp, rbp
+  mov r12, g_questTokenTable
+  lea r12, [r12 + rax * 8]
+  add ebx, eax
+  mov r14, g_questTokenEnd
+  pop rbp
+  pop r11
+  pop r10
+  pop r9
+  pop r8
+  pop rdx
+  pop rcx
+  pop rax
+  jmp qword ptr [g_questTokenLoop]
+QuestTokenStub ENDP
 
 END

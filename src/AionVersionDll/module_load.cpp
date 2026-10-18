@@ -13,7 +13,7 @@ struct Watch {
     DllEntry_t realEntry;
 };
 
-static Watch s_watches[4];
+static Watch s_watches[12];
 static int s_watchCount = 0;
 static PVOID s_ldrCookie = nullptr;
 
@@ -27,7 +27,8 @@ static BOOL WINAPI zzEntry(HINSTANCE instance, DWORD reason, LPVOID reserved) {
     return result;
 }
 
-static const DllEntry_t ENTRY_WRAPPERS[] = { zzEntry<0>, zzEntry<1>, zzEntry<2>, zzEntry<3> };
+static const DllEntry_t ENTRY_WRAPPERS[] = { zzEntry<0>, zzEntry<1>, zzEntry<2>, zzEntry<3>, zzEntry<4>, zzEntry<5>, zzEntry<6>, zzEntry<7>,
+    zzEntry<8>, zzEntry<9>, zzEntry<10>, zzEntry<11> };
 static_assert(_countof(ENTRY_WRAPPERS) == _countof(s_watches), "one entry wrapper per watch");
 
 /// Points the loader's entry for the module at the wrapper of the watch.
