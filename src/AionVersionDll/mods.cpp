@@ -428,6 +428,7 @@ void InstallMods(HINSTANCE self) {
         g_modsConfig.noSessionTimeout, g_modsConfig.ping, g_modsConfig.macroLimit, g_modsConfig.statPrecision);
     g_moduleLog = ModsLog;
     InstallCrashLog();
+    InstallReserveFix();
 
     OnModuleLoad(L"Game.dll", InstallGameMods, true);
     OnModuleLoad(L"CryFont.dll", InstallGlyphCells, false);

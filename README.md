@@ -3,7 +3,7 @@ Fixes and optional mods for the Aion game client, loaded as `version.dll` next t
 
 Fixes:
 - **Connection:** connects to non-official game server IPs (no "No game server is available to the authorization server (6)"), and 64-bit clients no longer crash now and then when another player comes into sight.
-- **Start:** launches the 64-bit client on Windows 11 24H2 and later, on systems with 32 or more logical processors, and 5.x clients without XignCode.
+- **Start:** launches the 64-bit client on Windows 11 24H2 and later, on systems with 32 or more logical processors, 5.x clients without XignCode, and 64-bit clients no longer crash after loading on systems whose video driver reserves a large part of the address space (AMD with DXVK).
 - **Camera:** turns by raw mouse input, so it no longer jumps on Windows 10 (since version 1709) and 11 and keeps working, together with the keys, while Bandicam captures the window.
 - **PrintScreen:** no longer opens the Snipping Tool over the game's own screenshot.
 - **Graphics:** no black flickering with the High Quality engine (Nvidia, and AMD with DXVK), all graphics sliders available at high resolutions, no stretched picture or misplaced cursor on screens larger than 2560x1920, and no blurred picture on screens scaled above 100 % (a DPI setting in the compatibility tab of `aion.bin` still comes first).

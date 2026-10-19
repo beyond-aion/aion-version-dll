@@ -90,6 +90,7 @@ bool IsInWorld();
 
 void InstallMods(HINSTANCE self);
 void InstallCrashLog();
+void InstallReserveFix();
 void InstallChatTime(HMODULE game);
 void InstallColorTagFix(HMODULE game);
 void InstallServerCheckFix(HMODULE game);
