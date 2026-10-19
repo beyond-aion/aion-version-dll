@@ -5,7 +5,7 @@
 
 // Diagnostic build, not for merging: keeps the last camera events in memory and writes them to camera_diag_<pid>.log next to version.dll
 // when something looks like a jump (a mouse move outside the window or far from where the client put the cursor, a large raw mouse delta,
-// the client not putting the cursor back for a while) and when Pause is pressed. Each line: ms since the start, the event.
+// the client not putting the cursor back for a while) and when F12 is pressed. Each line: ms since the start, the event.
 
 static const int RING = 512;
 static char s_ring[RING][192];
@@ -101,6 +101,6 @@ void InstallCameraDiag() {
     s_log = _wfsopen(path, L"w", _SH_DENYWR);
     SYSTEMTIME t;
     GetLocalTime(&t);
-    CameraDiagLine("camera diag started %04d-%02d-%02d %02d:%02d:%02d; press Pause right after the camera misbehaves", t.wYear, t.wMonth,
+    CameraDiagLine("camera diag started %04d-%02d-%02d %02d:%02d:%02d; press F12 right after the camera misbehaves", t.wYear, t.wMonth,
         t.wDay, t.wHour, t.wMinute, t.wSecond);
 }
