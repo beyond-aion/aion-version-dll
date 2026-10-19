@@ -28,6 +28,11 @@ static RECT s_previousClip;
 static bool s_clipped;
 static double s_speed, s_restX, s_restY;
 static HRAWINPUT s_lastRawInput;
+// After a hitch the client may let go of the mouse capture in the middle of a turn and still turn on without it, by the real cursor. That
+// cursor is then put where the client put it back last, the moves from where it was pinned are dropped, and the turn goes on as soon as the
+// client puts it back there again.
+static bool s_releasedMidTurn;
+static POINT s_pinned;
 
 /// Pointer speed multipliers of the mouse settings, by the speed 1..20, so that the camera turns as fast as it did with cursor moves.
 static const double POINTER_SPEEDS[] = { 1 / 32.0, 1 / 16.0, 1 / 8.0, 2 / 8.0, 3 / 8.0, 4 / 8.0, 5 / 8.0, 6 / 8.0, 7 / 8.0, 1, 1.25, 1.5, 1.75, 2,
@@ -91,6 +96,8 @@ static void StartTurning(int x, int y) {
     GetClipCursor(&s_previousClip);
     RECT pin = { cursor.x, cursor.y, cursor.x + 1, cursor.y + 1 };
     s_clipped = ClipCursor(&pin) != FALSE;
+    s_pinned = cursor;
+    s_releasedMidTurn = false;
     s_turning = true;
 }
 
@@ -153,9 +160,10 @@ static MSG MakeMouseMove(POINT at) {
 
 static BOOL WINAPI zzSetCursorPos(_In_ int X, _In_ int Y) {
     if (s_rawInput && !s_absoluteInput && OnWindowThread() && FromGame(_ReturnAddress())) {
-        if (!s_turning && GetCapture() == s_window && AnyButtonHeld()) {
+        if (!s_turning && AnyButtonHeld() && (GetCapture() == s_window || s_releasedMidTurn && X == s_warp.x && Y == s_warp.y)) {
             StartTurning(X, Y);
         }
+        s_releasedMidTurn = false;
         if (s_turning) {
             // the client reads where the cursor went from the next mouse move, as Windows used to send one
             s_virtual = { X, Y };
@@ -179,6 +187,10 @@ static BOOL WINAPI zzGetCursorPos(_Out_ LPPOINT lpPoint) {
 static BOOL WINAPI zzReleaseCapture() {
     if (s_turning && FromGame(_ReturnAddress())) {
         StopTurning();
+        if (AnyButtonHeld()) {
+            real_SetCursorPos(s_warp.x, s_warp.y);
+            s_releasedMidTurn = true;
+        }
     }
     return real_ReleaseCapture();
 }
@@ -249,6 +261,9 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
     if (s_turning && OnWindowThread() && (!AnyButtonHeld() || GetForegroundWindow() != s_window)) {
         StopTurning();
     }
+    if (s_releasedMidTurn && OnWindowThread() && !AnyButtonHeld()) {
+        s_releasedMidTurn = false;
+    }
     bool movesWanted = (!hWnd || hWnd == s_window)
         && (wMsgFilterMin == 0 && wMsgFilterMax == 0 || wMsgFilterMin <= WM_MOUSEMOVE && WM_MOUSEMOVE <= wMsgFilterMax);
     for (;;) {
@@ -271,7 +286,8 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
             OnRawInput((HRAWINPUT)lpMsg->lParam);
         }
         // positions of the real cursor, which stays put while turning
-        bool drop = s_turning && lpMsg->message == WM_MOUSEMOVE && lpMsg->hwnd == s_window || !TranslatePrintScreen(lpMsg);
+        bool drop = lpMsg->message == WM_MOUSEMOVE && lpMsg->hwnd == s_window
+            && (s_turning || s_releasedMidTurn && lpMsg->pt.x == s_pinned.x && lpMsg->pt.y == s_pinned.y) || !TranslatePrintScreen(lpMsg);
         if (drop) {
             if (!(wRemoveMsg & PM_REMOVE)) {
                 MSG dropped;
