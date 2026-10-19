@@ -73,6 +73,44 @@ static void LogStackCode(DWORD64 rsp) {
     }
 }
 
+/// Diagnostics: where the memory of the process lies. CryFree looks every block up in a table that covers the first 16 GB only.
+void LogAddressSpace(const char* when) {
+    const ULONG_PTR LOW = 16ULL << 30, END = 1ULL << 47;
+    ULONG_PTR freeLow = 0, largestFreeLow = 0, base = 0, size = 0, committed = 0;
+    DWORD type = 0;
+    int listed = 0;
+    auto flush = [&]() {
+        if (size && (size >= (256ULL << 20) || base >= LOW && size >= (16ULL << 20)) && listed < 40) {
+            ModsLog("memory %s: %012llX %7llu MB reserved, %6llu MB committed, %s", when, (DWORD64)base, (DWORD64)(size >> 20), (DWORD64)(committed >> 20),
+                type == MEM_IMAGE ? "image" : type == MEM_MAPPED ? "mapped" : "private");
+            listed++;
+        }
+    };
+    MEMORY_BASIC_INFORMATION region;
+    for (ULONG_PTR at = 0x10000; at < END && VirtualQuery((void*)at, &region, sizeof(region)); at = (ULONG_PTR)region.BaseAddress + region.RegionSize) {
+        if (region.State == MEM_FREE) {
+            if ((ULONG_PTR)region.BaseAddress < LOW) {
+                ULONG_PTR part = min((ULONG_PTR)region.BaseAddress + region.RegionSize, LOW) - (ULONG_PTR)region.BaseAddress;
+                freeLow += part;
+                largestFreeLow = max(largestFreeLow, part);
+            }
+            continue;
+        }
+        if ((ULONG_PTR)region.AllocationBase != base) {
+            flush();
+            base = (ULONG_PTR)region.AllocationBase;
+            size = committed = 0;
+            type = region.Type;
+        }
+        size += region.RegionSize;
+        if (region.State == MEM_COMMIT) {
+            committed += region.RegionSize;
+        }
+    }
+    flush();
+    ModsLog("memory %s: %llu MB free below 16 GB, largest %llu MB", when, (DWORD64)(freeLow >> 20), (DWORD64)(largestFreeLow >> 20));
+}
+
 static LONG WINAPI CrashFilter(EXCEPTION_POINTERS* pointers) {
     if (!InterlockedExchange(&s_crashed, 1)) {
         EXCEPTION_RECORD* record = pointers->ExceptionRecord;
@@ -92,6 +130,7 @@ static LONG WINAPI CrashFilter(EXCEPTION_POINTERS* pointers) {
         ModsLog("crash: r12=%016llX r13=%016llX r14=%016llX r15=%016llX", c->R12, c->R13, c->R14, c->R15);
         LogFrames(*c);
         LogStackCode(c->Rsp);
+        LogAddressSpace("at the crash");
     }
     return s_clientFilter ? s_clientFilter(pointers) : EXCEPTION_CONTINUE_SEARCH;
 }

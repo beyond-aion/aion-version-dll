@@ -43,6 +43,7 @@ bool IsInWorld();
 
 /// Must be called inside an open Detours transaction.
 void InstallMods();
+void LogAddressSpace(const char* when);
 void InstallChatTime(HMODULE game);
 void InstallTimeouts(HMODULE game);
 void InstallPing(HMODULE game);

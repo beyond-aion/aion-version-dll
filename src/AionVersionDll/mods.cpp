@@ -75,6 +75,7 @@ static bool FindGameState(HMODULE game) {
 }
 
 static void InstallGameMods(HMODULE game) {
+    LogAddressSpace("with Game.dll");
     if (s_gameModsInstalled) {
         return;
     }
@@ -131,6 +132,8 @@ void InstallMods() {
     LoadConfig();
     ModsLog("mods: chatTimeFormat=%d antiAfk=%d noSessionTimeout=%d ping=%d macroLimit=%d stats=%d", g_modsConfig.chatTimeFormat, g_modsConfig.antiAfk,
         g_modsConfig.noSessionTimeout, g_modsConfig.ping, g_modsConfig.macroLimit, g_modsConfig.statPrecision);
+    LogAddressSpace("at the start");
+
     OnModuleLoad(L"Game.dll", InstallGameMods, true);
     OnModuleLoad(L"CryFont.dll", InstallGlyphCells, false);
     if (g_modsConfig.fastStart != FAST_START_OFF) {
