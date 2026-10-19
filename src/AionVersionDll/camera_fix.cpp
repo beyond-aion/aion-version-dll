@@ -2,7 +2,7 @@
 #include <windowsx.h>
 #include <intrin.h>
 #include <psapi.h>
-#include "detours.h"
+#include <detours/detours.h>
 
 #pragma warning(disable: 28159)
 

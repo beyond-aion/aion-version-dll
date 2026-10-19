@@ -2,7 +2,7 @@
 #include "module_load.h"
 #include <stdio.h>
 #include <string>
-#include "detours.h"
+#include <detours/detours.h>
 
 // The client writes each line of Chat.log in the code page of the current keyboard layout, so letters the layout's code page lacks
 // turn into question marks, and cuts it at 255 bytes. Its writer is replaced: it checks the g_chatlog console variable the way the

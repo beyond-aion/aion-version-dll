@@ -1,5 +1,5 @@
 #include "mods.h"
-#include "detours.h"
+#include <detours/detours.h>
 
 /// The client counts the windows of its class when it starts and closes the other clients if two of them are open:
 /// lea rcx, "Running %d instances."; call log; cmp dword ptr [reg+count], 2; jl start

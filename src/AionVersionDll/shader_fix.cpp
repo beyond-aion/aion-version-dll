@@ -4,7 +4,7 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 #pragma comment(lib, "Shlwapi.lib")
-#include "detours.h"
+#include <detours/detours.h>
 
 typedef HRESULT(WINAPI* PFN_D3DXCompileShader)(LPCSTR, UINT, const void*, void*, LPCSTR, LPCSTR, DWORD, void**, void**, void**);
 static PFN_D3DXCompileShader real_D3DXCompileShader = nullptr;

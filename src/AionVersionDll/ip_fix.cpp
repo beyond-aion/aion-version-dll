@@ -5,7 +5,7 @@
 #include <string>
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
-#include "detours.h"
+#include <detours/detours.h>
 #if defined(_M_AMD64)
 #include "mods.h"
 #define IP_LOG(...) ModsLog(__VA_ARGS__)

@@ -1,7 +1,7 @@
 #include "mods.h"
 #include "module_load.h"
 #include <math.h>
-#include "detours.h"
+#include <detours/detours.h>
 
 // The character window fills attack speed with a direct call right after looking up this widget.
 static const char ATTACK_SPEED_WIDGET[] = "atk_delay";

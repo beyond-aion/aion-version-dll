@@ -1,5 +1,5 @@
 #include "mods.h"
-#include "detours.h"
+#include <detours/detours.h>
 
 // The pool of CrySystem looks its blocks up in a page table that only covers the first 16 GB of the address space, without a bounds check.
 // Some video drivers (the Vulkan driver of AMD) reserve hundreds of gigabytes early, and the system puts such a reservation at the lowest free

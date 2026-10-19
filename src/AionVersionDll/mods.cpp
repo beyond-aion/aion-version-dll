@@ -6,7 +6,7 @@
 #include <shlwapi.h>
 #include <string>
 #include <vector>
-#include "detours.h"
+#include <detours/detours.h>
 
 ModsConfig g_modsConfig = {};
 wchar_t g_modsIniPath[MAX_PATH];

@@ -3,7 +3,7 @@
 #include <d3d9.h>
 #include <stdio.h>
 #include <vector>
-#include "detours.h"
+#include <detours/detours.h>
 #include "dxvk_hud_font.h"
 #include <math.h>
 

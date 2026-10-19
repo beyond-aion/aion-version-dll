@@ -11,8 +11,8 @@
 #include <bcrypt.h>
 #include <tlhelp32.h>
 #include <shlwapi.h>
-#include "detours.h"
-#include "../libdeflate/libdeflate.h"
+#include <detours/detours.h>
+#include <libdeflate.h>
 
 #pragma comment(lib, "bcrypt.lib")
 

@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <unordered_map>
 #include <vector>
-#include "detours.h"
+#include <detours/detours.h>
 
 // First entry of the table of graphic characters for quest icons (givable, working, finished per quest kind).
 static const char FIRST_QUEST_ICON[] = "quest_givable";

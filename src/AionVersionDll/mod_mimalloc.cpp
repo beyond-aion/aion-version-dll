@@ -1,7 +1,7 @@
 #include "mods.h"
 #include "module_load.h"
-#include "detours.h"
-#include "../mimalloc/include/mimalloc.h"
+#include <detours/detours.h>
+#include <mimalloc.h>
 
 // The clients allocate through two allocators of CrySystem, both slow on a busy thread: the pool behind CryMalloc, whose locks run in
 // code the packer virtualised, and the per-thread pool behind ISystem, which walks a whole free list whenever one of its pages empties.

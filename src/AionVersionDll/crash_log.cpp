@@ -1,5 +1,5 @@
 #include "mods.h"
-#include "detours.h"
+#include <detours/detours.h>
 
 // The client writes its own crash report next to aion.bin, which fails where the game folder is not writable (Program Files). So the crash
 // goes to mods.log first: the faulting address and the frames as module+offset, the registers and the code addresses on the stack.

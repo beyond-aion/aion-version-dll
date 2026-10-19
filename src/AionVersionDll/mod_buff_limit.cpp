@@ -1,7 +1,7 @@
 #include "mods.h"
 #include <intrin.h>
 #include <stdio.h>
-#include "detours.h"
+#include <detours/detours.h>
 
 /// The virtual table of a class, found through its RTTI: type descriptor name -> complete object locator -> table.
 static BYTE* FindVtable(HMODULE module, const char* rttiName) {

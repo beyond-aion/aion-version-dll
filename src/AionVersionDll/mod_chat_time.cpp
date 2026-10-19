@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <wchar.h>
-#include "detours.h"
+#include <detours/detours.h>
 
 // Message types below 73 are chat channels, which go through a text filter first; 203..205 are GM alerts that also go to the screen
 // center, which gets them without the time; from 206 on they are debug output.

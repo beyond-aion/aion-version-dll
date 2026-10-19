@@ -1,7 +1,7 @@
 #include "mods.h"
 #include <map>
 #include <string>
-#include "detours.h"
+#include <detours/detours.h>
 
 /// What the XML loader hands its binary parser: the whole file followed by three zero bytes.
 struct XmlBuffer {

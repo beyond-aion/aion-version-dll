@@ -1,7 +1,7 @@
 #include <intrin.h>
 #include <string.h>
 #include <windows.h>
-#include "detours.h"
+#include <detours/detours.h>
 
 static decltype(LoadLibraryW)* real_LoadLibraryW = LoadLibraryW;
 /// Skips loading the xigncode module (.xem) by returning straight into the caller's success branch, which sets eax to 1.

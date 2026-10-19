@@ -1,6 +1,6 @@
 #include "exports.h"
 #include <winternl.h>
-#include "detours.h"
+#include <detours/detours.h>
 
 /* Code from https://github.com/AbdouRoumi/Custom-GetProcAddress */
 FARPROC CustomGetProcProcess(IN HMODULE hModule, IN LPCSTR FuncName) {

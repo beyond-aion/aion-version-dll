@@ -1,6 +1,6 @@
 #include "exports.h"
 #include <stdio.h>
-#include "detours.h"
+#include <detours/detours.h>
 #if defined(_M_AMD64)
 #include "mods.h"
 #endif

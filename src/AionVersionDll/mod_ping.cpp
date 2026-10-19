@@ -1,7 +1,7 @@
 #include "mods.h"
 #include "ping.h"
 #include <winsock2.h>
-#include "detours.h"
+#include <detours/detours.h>
 
 // A ping that got no answer within this time counts as lost.
 static constexpr ULONGLONG PING_TIMEOUT_MS = 10000;

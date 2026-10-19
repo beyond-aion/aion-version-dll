@@ -29,7 +29,7 @@ The mods find their places in the client by content rather than by fixed address
 The ping text uses the font of the [DXVK](https://github.com/doitsujin/dxvk) HUD (zlib/libpng license, see `dxvk_hud_font.h`), so it looks the same as the DXVK frame rate next to it.
 
 ## Building
-This project depends on [MS Detours](https://github.com/Microsoft/Detours). Since it's served via NuGet, you should be able to build the project straight away. [libdeflate](https://github.com/ebiggers/libdeflate) 1.26 and [mimalloc](https://github.com/microsoft/mimalloc) 3.5.3 (both MIT, see `src/libdeflate/COPYING` and `src/mimalloc/LICENSE`) are included as source. The 64-bit build copies `mods.ini` next to `version.dll`.
+This project depends on [MS Detours](https://github.com/Microsoft/Detours), [libdeflate](https://github.com/ebiggers/libdeflate) and [mimalloc](https://github.com/microsoft/mimalloc), which [vcpkg](https://vcpkg.io) fetches and builds as static libraries on the first build, as listed in `vcpkg.json`. Visual Studio 2026 includes vcpkg, so the project builds straight away; another vcpkg is used when `VCPKG_ROOT` points to it. The 64-bit build copies `mods.ini` next to `version.dll`.
 
 ## Installation
 1. Copy each `version.dll` to the respective `bin32` or `bin64` folder within the game root directory.

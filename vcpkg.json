@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "dependencies": [
+    "detours",
+    {
+      "name": "libdeflate",
+      "default-features": false,
+      "features": [ "compression", "decompression", "zlib" ],
+      "platform": "x64"
+    },
+    {
+      "name": "mimalloc",
+      "platform": "x64"
+    }
+  ],
+  "builtin-baseline": "664933b8d385dfc01f4e0cdff4c7c74e71f6a740"
+}
