@@ -368,8 +368,8 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
         if (wRemoveMsg & PM_REMOVE) {
             if (lpMsg->hwnd == s_window) {
                 TrackKey(lpMsg);
-                if (lpMsg->message == WM_KEYDOWN && lpMsg->wParam == VK_F12) {
-                    CameraDiagDump("USER MARK (F12)");
+                if (lpMsg->message == WM_KEYDOWN && lpMsg->wParam == VK_F11) {
+                    CameraDiagDump("USER MARK (F11)");
                 }
                 if (lpMsg->message == WM_MOUSEMOVE && AnyButtonHeld()) {
                     CameraDiagTrace("real move client %d,%d pt %ld,%ld with a button held, not turning", GET_X_LPARAM(lpMsg->lParam),
