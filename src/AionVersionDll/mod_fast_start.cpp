@@ -219,6 +219,15 @@ static int __cdecl zz_compress2(BYTE* dest, unsigned long* destLen, const BYTE* 
         return real_compress2(dest, destLen, source, sourceLen, level);
     }
     *destLen = (unsigned long)size;
+    {
+        static volatile long blocks = 0, wrong = 0;
+        std::vector<BYTE> back(sourceLen + 64);
+        unsigned long backLen = (unsigned long)back.size();
+        int r = real_uncompress(back.data(), &backLen, dest, *destLen);
+        if (r != 0 || backLen != sourceLen || memcmp(back.data(), source, sourceLen) != 0) InterlockedIncrement(&wrong);
+        long n = InterlockedIncrement(&blocks);
+        if (n % 2000 == 0 || wrong && wrong < 5) ModsLog("verify compress: %ld blocks, %ld wrong (level %d, %lu -> %lu)", n, wrong, level, sourceLen, *destLen);
+    }
     return 0;
 }
 
@@ -230,6 +239,15 @@ static int __cdecl zz_uncompress(BYTE* dest, unsigned long* destLen, const BYTE*
     size_t read, written;
     if (!decompressor || libdeflate_zlib_decompress_ex(decompressor, source, sourceLen, dest, *destLen, &read, &written) != LIBDEFLATE_SUCCESS) {
         return real_uncompress(dest, destLen, source, sourceLen);
+    }
+    {
+        static volatile long blocks = 0, wrong = 0;
+        std::vector<BYTE> other(*destLen);
+        unsigned long otherLen = *destLen;
+        int r = real_uncompress(other.data(), &otherLen, source, sourceLen);
+        if (r != 0 || otherLen != written || memcmp(other.data(), dest, written) != 0) InterlockedIncrement(&wrong);
+        long n = InterlockedIncrement(&blocks);
+        if (n % 2000 == 0 || wrong && wrong < 5) ModsLog("verify uncompress: %ld blocks, %ld wrong", n, wrong);
     }
     *destLen = (unsigned long)written;
     return 0;
@@ -310,6 +328,15 @@ static int __cdecl zzRawInflate4(void* allocator, BYTE* dest, unsigned long* des
     if (!RawInflate(src, srcLen, dest, *destLen, written)) {
         return real_RawInflate4(allocator, dest, destLen, src, srcLen);
     }
+    {
+        static volatile long n = 0, wrong = 0;
+        std::vector<BYTE> tmp(*destLen + 1);
+        unsigned long len = *destLen;
+        int r = real_RawInflate4(allocator, tmp.data(), &len, src, srcLen);
+        if (r != 0 || len != written || memcmp(tmp.data(), dest, written)) InterlockedIncrement(&wrong);
+        long k = InterlockedIncrement(&n);
+        if (k % 2000 == 0 || wrong && wrong < 5) ModsLog("verify inflate4: %ld files, %ld wrong", k, wrong);
+    }
     *destLen = written;
     return 0;
 }
@@ -318,6 +345,19 @@ static int __cdecl zzRawInflate5(void* allocator, OutputBlock* out, unsigned lon
     unsigned long written;
     if (out->next || !RawInflate(src, srcLen, out->data, out->size, written)) {
         return real_RawInflate5(allocator, out, total, src, srcLen);
+    }
+    {
+        static volatile long n = 0, wrong = 0;
+        unsigned long size0 = out->size;
+        std::vector<BYTE> tmp(sizeof(OutputBlock) + size0 + 16);
+        OutputBlock* block = (OutputBlock*)tmp.data();
+        block->next = nullptr;
+        block->size = size0;
+        unsigned long total2 = 0;
+        int r = real_RawInflate5(allocator, block, &total2, src, srcLen);
+        if (r != 0 || total2 != written || block->size != written || memcmp(block->data, out->data, written)) InterlockedIncrement(&wrong);
+        long k = InterlockedIncrement(&n);
+        if (k % 2000 == 0 || wrong && wrong < 5) ModsLog("verify inflate5: %ld files, %ld wrong", k, wrong);
     }
     out->size = written;
     *total = written;
@@ -869,7 +909,19 @@ static bool InPage(const void* p) {
 /// Skips equal characters four at a time, as equal characters stay equal in every locale. Folds A-Z like the runtime does in every
 /// locale but the Turkish one; at the first differing character outside ASCII the runtime compares the rest, which gives its own
 /// result as the parts before are equal.
+static int __cdecl fast_wcsicmp(const wchar_t* a, const wchar_t* b);
 static int __cdecl zz_wcsicmp(const wchar_t* a, const wchar_t* b) {
+    int fast = fast_wcsicmp(a, b);
+    if (a && b) {
+        static volatile long calls = 0, wrong = 0;
+        int slow = real_wcsicmp(a, b);
+        if (slow != fast) { InterlockedIncrement(&wrong); if (wrong < 8) ModsLog("verify wcsicmp: %ls / %ls: %d, runtime %d", a, b, fast, slow); }
+        long n = InterlockedIncrement(&calls);
+        if (n % 5000000 == 0) ModsLog("verify wcsicmp: %ld calls, %ld wrong", n, wrong);
+    }
+    return fast;
+}
+static int __cdecl fast_wcsicmp(const wchar_t* a, const wchar_t* b) {
     if (!a || !b) {
         return real_wcsicmp(a, b);
     }
@@ -909,7 +961,19 @@ static int __cdecl zz_wcsicmp(const wchar_t* a, const wchar_t* b) {
 }
 
 /// The same for byte strings, which CrySystem compares while it opens the .pak archives.
+static int __cdecl fast_stricmp(const char* a, const char* b);
 static int __cdecl zz_stricmp(const char* a, const char* b) {
+    int fast = fast_stricmp(a, b);
+    if (a && b) {
+        static volatile long calls = 0, wrong = 0;
+        int slow = real_stricmp(a, b);
+        if (slow != fast) { InterlockedIncrement(&wrong); if (wrong < 8) ModsLog("verify stricmp: %s / %s: %d, runtime %d", a, b, fast, slow); }
+        long n = InterlockedIncrement(&calls);
+        if (n % 1000000 == 0) ModsLog("verify stricmp: %ld calls, %ld wrong", n, wrong);
+    }
+    return fast;
+}
+static int __cdecl fast_stricmp(const char* a, const char* b) {
     if (!a || !b) {
         return real_stricmp(a, b);
     }
@@ -947,7 +1011,19 @@ static int __cdecl zz_stricmp(const char* a, const char* b) {
 }
 
 /// The same for at most count characters, with which 4.6 finds the closing tag of every XML element it reads.
+static int __cdecl fast_wcsnicmp(const wchar_t* a, const wchar_t* b, size_t count);
 static int __cdecl zz_wcsnicmp(const wchar_t* a, const wchar_t* b, size_t count) {
+    int fast = fast_wcsnicmp(a, b, count);
+    if (a && b) {
+        static volatile long calls = 0, wrong = 0;
+        int slow = real_wcsnicmp(a, b, count);
+        if (slow != fast) { if (InterlockedIncrement(&wrong) < 6) ModsLog("verify wcsnicmp: %.40ls / %.40ls (%zu): %d, runtime %d", a, b, count, fast, slow); }
+        long n = InterlockedIncrement(&calls);
+        if (n % 1000000 == 0) ModsLog("verify wcsnicmp: %ld calls, %ld wrong", n, wrong);
+    }
+    return fast;
+}
+static int __cdecl fast_wcsnicmp(const wchar_t* a, const wchar_t* b, size_t count) {
     if (!a || !b) {
         return real_wcsnicmp(a, b, count);
     }
@@ -1039,7 +1115,19 @@ static int FormatPlain(wchar_t* buffer, size_t size, const wchar_t* format, va_l
 
 /// Only with _TRUNCATE as the count, which writes what fits and returns -1 if it did not all fit. Anything else goes to the runtime,
 /// which then reads the arguments from the start.
+static int __cdecl fast_vsnwprintf_s(wchar_t* buffer, size_t size, size_t count, const wchar_t* format, va_list args);
 static int __cdecl zz_vsnwprintf_s(wchar_t* buffer, size_t size, size_t count, const wchar_t* format, va_list args) {
+    if (!buffer || !size || size > 100000) return fast_vsnwprintf_s(buffer, size, count, format, args);
+    std::vector<wchar_t> copy(buffer, buffer + size);
+    int fast = fast_vsnwprintf_s(buffer, size, count, format, args);
+    int slow = real_vsnwprintf_s(copy.data(), size, count, format, args);
+    static volatile long calls = 0, wrong = 0;
+    if (fast != slow || memcmp(copy.data(), buffer, size * sizeof(wchar_t))) { if (InterlockedIncrement(&wrong) < 6) ModsLog("verify printf: %ls -> %d / %d", format, fast, slow); }
+    long n = InterlockedIncrement(&calls);
+    if (n % 1000000 == 0) ModsLog("verify printf: %ld calls, %ld wrong", n, wrong);
+    return fast;
+}
+static int __cdecl fast_vsnwprintf_s(wchar_t* buffer, size_t size, size_t count, const wchar_t* format, va_list args) {
     if (count != _TRUNCATE || !buffer || !size || !format) {
         return real_vsnwprintf_s(buffer, size, count, format, args);
     }
@@ -1053,7 +1141,18 @@ static int __cdecl zz_vsnwprintf_s(wchar_t* buffer, size_t size, size_t count, c
 }
 
 /// The legacy swprintf without a size, with which 4.6 builds the closing tag of every XML element it reads.
+static int __cdecl fast_vswprintf(wchar_t* buffer, const wchar_t* format, va_list args);
 static int __cdecl zz_vswprintf(wchar_t* buffer, const wchar_t* format, va_list args) {
+    static wchar_t one[8192], two[8192];
+    int fast = fast_vswprintf(one, format, args);
+    int slow = real_vswprintf(two, format, args);
+    static volatile long calls = 0, wrong = 0;
+    if (fast != slow || wcscmp(one, two)) { if (InterlockedIncrement(&wrong) < 6) ModsLog("verify vswprintf: %ls -> %d / %d", format, fast, slow); }
+    long n = InterlockedIncrement(&calls);
+    if (n % 200000 == 0) ModsLog("verify vswprintf: %ld calls, %ld wrong", n, wrong);
+    return fast_vswprintf(buffer, format, args);
+}
+static int __cdecl fast_vswprintf(wchar_t* buffer, const wchar_t* format, va_list args) {
     int length = buffer && format ? FormatPlain(buffer, SIZE_MAX, format, args) : -2;
     return length == -2 ? real_vswprintf(buffer, format, args) : length;
 }
@@ -1180,6 +1279,15 @@ static __int64 __fastcall zzSetField(const DWORD* fields, __int64 row, const wch
         return real_SetField(fields, row, name, value);
     }
     int found = index->slots[FindSlot(fields, *index, name, hash)];
+    {
+        static volatile long calls = 0, wrong = 0;
+        auto cmp = real_wcsicmp;
+        int slow = -1;
+        for (int i = 0; fields[8 * i]; i++) if (cmp(name, FieldName(fields, i)) == 0) { slow = i; break; }
+        if (slow != found) InterlockedIncrement(&wrong);
+        long n = InterlockedIncrement(&calls);
+        if (n % 100000 == 0 || slow != found && wrong < 5) ModsLog("verify fields: %ld calls, %ld wrong", n, wrong);
+    }
     // a name the list does not have: the function would compare it with all fields and return 0
     return found < 0 ? 0 : real_SetField(fields + 8 * found, row, name, value);
 }
@@ -1343,7 +1451,21 @@ static std::unordered_map<DWORD, int> s_questTokens;
 
 /// Where the loop starts: at the token of that name, at the last token when there is none (it differs, so the loop ends as without
 /// a match), or at the first when the hash cannot tell.
+static int QuestTokenIndexFast(const wchar_t* name);
 extern "C" int QuestTokenIndex(const wchar_t* name) {
+    const wchar_t** tokens = (const wchar_t**)g_questTokenTable;
+    int count = (int)((g_questTokenEnd - g_questTokenTable) / sizeof(void*));
+    int r = QuestTokenIndexFast(name), t = 0;
+    while (t < count && real_wcsicmp(name, tokens[t]) != 0) t++;
+    bool ok = r == 0 || (t < count ? r == t : r == count - 1);
+    static volatile long calls = 0, wrong = 0, fallback = 0;
+    if (!ok && InterlockedIncrement(&wrong) < 10) ModsLog("verify quest token %ls: %d, loop %d", name, r, t);
+    if (r == 0 && t != 0) InterlockedIncrement(&fallback);
+    long n = InterlockedIncrement(&calls);
+    if (n % 20000 == 0) ModsLog("verify quest tokens: %ld calls, %ld wrong, %ld fallback", n, wrong, fallback);
+    return r;
+}
+static int QuestTokenIndexFast(const wchar_t* name) {
     const wchar_t** tokens = (const wchar_t**)g_questTokenTable;
     int count = (int)((g_questTokenEnd - g_questTokenTable) / sizeof(void*));
     DWORD hash;
