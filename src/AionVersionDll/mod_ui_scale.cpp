@@ -24,7 +24,7 @@ void InstallGlyphCells(HMODULE cryFont) {
     // cmp dword ptr [r14+tmHeight], 32; jle; mov dword ptr [r14+largeCells], 1
     BYTE* p = FindPattern(cryFont, "41 83 7E ?? 20 7E ?? 41 C7 86 ?? ?? 00 00 01 00 00 00");
     if (!p) {
-        ModsLog("glyph cells: check not found");
+        ModsLog("glyph cells: not needed in this client, only 5.x has the check");
         return;
     }
     BYTE limit = (BYTE)(g_modsConfig.largeGlyphFrom - 1);

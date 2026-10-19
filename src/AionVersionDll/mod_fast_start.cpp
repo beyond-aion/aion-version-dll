@@ -775,7 +775,7 @@ static void HookFieldLookup(HMODULE game) {
         ModsLog("fast start: field lookup at %p", function);
         return;
     }
-    ModsLog("fast start: field lookup not found");
+    ModsLog("fast start: field lookup not in this client, only 4.x has it");
 }
 
 // 5.x clients write a report of the table heap after loading each table: they walk the whole heap with HeapWalk and print every
@@ -852,7 +852,7 @@ static void HookMapLowerBound(HMODULE game) {
     BYTE* middle = FindPattern(game, "E8 ?? ?? ?? ?? 48 8B 4C 24 40 39 69 1C 7D");
     BYTE* function = middle ? FunctionStart(middle) : nullptr;
     if (!function) {
-        ModsLog("fast start: map lookup not found");
+        ModsLog("fast start: map lookup not in this client, only 5.x has it");
         return;
     }
     real_LowerBound = (LowerBound_t)function;
@@ -924,7 +924,7 @@ extern "C" int QuestTokenIndex(const wchar_t* name) {
 static void HookQuestTokens(HMODULE game) {
     BYTE* p = FindPattern(game, "8B DD 4C 8D 25 ?? ?? ?? ?? 4C 8D 35 ?? ?? ?? ?? 66 66 90 66 66 66 90 49 8B 14 24 49 8B CD FF 15 ?? ?? ?? ?? 85 C0 74 ?? 49 83 C4 08 83 C3 01 4D 3B E6 7C E3");
     if (!p) {
-        ModsLog("fast start: quest tokens not found");
+        ModsLog("fast start: quest tokens not in this client, only 4.x has them");
         return;
     }
     const wchar_t** tokens = (const wchar_t**)ResolveRip(p + 5, p + 9);
