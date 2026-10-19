@@ -426,6 +426,7 @@ void InstallMods(HINSTANCE self) {
     ModsLog("mods: chatTimeFormat=%d antiAfk=%d noSessionTimeout=%d ping=%d macroLimit=%d stats=%d", g_modsConfig.chatTimeFormat, g_modsConfig.antiAfk,
         g_modsConfig.noSessionTimeout, g_modsConfig.ping, g_modsConfig.macroLimit, g_modsConfig.statPrecision);
     g_moduleLog = ModsLog;
+    InstallCrashLog();
 
     OnModuleLoad(L"Game.dll", InstallGameMods, true);
     OnModuleLoad(L"CryFont.dll", InstallGlyphCells, false);

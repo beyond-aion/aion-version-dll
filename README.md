@@ -24,7 +24,7 @@ Optional additions to the game client, all of them off until turned on in `mods.
 - **mimalloc (4.6, 4.8, 5.8):** `Mimalloc=1` replaces the memory allocators of CrySystem with mimalloc for the whole session, which loads faster still, for 600 MB to 1 GB more memory.
 - **UI scale (5.x):** the UI scale option goes past 130 %, up to the screen size relative to 1280x960 (225 % on 3840x2160), and large fonts no longer lose the tails of letters like g and y.
 
-The mods find their places in the client by content rather than by fixed addresses, so they work with different client versions (4.6, 4.8 and 5.8 have been verified). A mod that finds nothing to change simply stays off, which `mods.log` next to `version.dll` shows, together with any problems in `mods.ini`.
+The mods find their places in the client by content rather than by fixed addresses, so they work with different client versions (4.6, 4.8 and 5.8 have been verified). A mod that finds nothing to change simply stays off, which `mods.log` next to `version.dll` shows, together with any problems in `mods.ini`. When the client crashes, `mods.log` also gets the crash: where it happened, the registers and the calls that led there.
 
 The ping text uses the font of the [DXVK](https://github.com/doitsujin/dxvk) HUD (zlib/libpng license, see `dxvk_hud_font.h`), so it looks the same as the DXVK frame rate next to it.
 

@@ -89,6 +89,7 @@ extern volatile int* g_gameState;
 bool IsInWorld();
 
 void InstallMods(HINSTANCE self);
+void InstallCrashLog();
 void InstallChatTime(HMODULE game);
 void InstallColorTagFix(HMODULE game);
 void InstallTimeouts(HMODULE game);
