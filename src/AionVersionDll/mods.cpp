@@ -374,6 +374,7 @@ static void InstallGameMods(HMODULE game) {
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
     InstallColorTagFix(game);
+    InstallServerCheckFix(game);
     if (g_modsConfig.chatTimeFormat != 0) {
         InstallChatTime(game);
     }

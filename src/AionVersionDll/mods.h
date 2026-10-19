@@ -92,6 +92,7 @@ void InstallMods(HINSTANCE self);
 void InstallCrashLog();
 void InstallChatTime(HMODULE game);
 void InstallColorTagFix(HMODULE game);
+void InstallServerCheckFix(HMODULE game);
 void InstallTimeouts(HMODULE game);
 void InstallPing(HMODULE game);
 void InstallMacroLimit(HMODULE game);

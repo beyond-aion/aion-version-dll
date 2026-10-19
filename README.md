@@ -2,7 +2,7 @@
 Fixes and optional mods for the Aion game client, loaded as `version.dll` next to the client.
 
 Fixes:
-- **Connection:** connects to non-official game server IPs (no "No game server is available to the authorization server (6)").
+- **Connection:** connects to non-official game server IPs (no "No game server is available to the authorization server (6)"), and 64-bit clients no longer crash now and then when another player comes into sight.
 - **Start:** launches the 64-bit client on Windows 11 24H2 and later, on systems with 32 or more logical processors, and 5.x clients without XignCode.
 - **Camera:** turns by raw mouse input, so it no longer jumps on Windows 10 (since version 1709) and 11 and keeps working, together with the keys, while Bandicam captures the window.
 - **PrintScreen:** no longer opens the Snipping Tool over the game's own screenshot.
