@@ -6,6 +6,12 @@
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
 #include "detours.h"
+#if defined(_M_AMD64)
+#include "mods.h"
+#define IP_LOG(...) ModsLog(__VA_ARGS__)
+#else
+#define IP_LOG(...)
+#endif
 
 static constexpr char officialIp[] = "70.5.0.18";
 static std::list<std::string> possibleConnectIps = {};
@@ -28,6 +34,7 @@ static decltype(lstrcpynA)* real_lstrcpynA = lstrcpynA;
 static LPSTR WINAPI zzlstrcpynA(_Out_writes_(iMaxLength) LPSTR lpString1, _In_ LPCSTR lpString2, _In_ int iMaxLength) {
     if (iMaxLength == 256 && contains(possibleConnectIps, lpString2)) {
         possibleConnectIps.clear();
+        IP_LOG("ip fix: %s copied as %s", lpString2, officialIp);
         return real_lstrcpynA(lpString1, officialIp, iMaxLength);
     }
     return real_lstrcpynA(lpString1, lpString2, iMaxLength);
@@ -41,6 +48,7 @@ static int WSAAPI zzconnect(_In_ SOCKET s, _In_reads_bytes_(namelen) const struc
 
 static char s_commandLineIp[16] = "";
 static char s_spoofedIp[16] = "";
+static char s_officialCopy[sizeof(officialIp)];
 
 /// The server IP given with -ip: on the command line, which 5.x clients compare against the official one.
 static bool ReadCommandLineIp() {
@@ -54,9 +62,15 @@ typedef char*(__cdecl* strtok_s_t)(char*, const char*, char**);
 static strtok_s_t real_strtok_s = nullptr;
 /// 5.x clients split the game server address with strtok_s instead of copying it with lstrcpynA
 static char* __cdecl zzstrtok_s(char* str, const char* delimiter, char** context) {
-    if (str && (contains(possibleConnectIps, str) || (*s_commandLineIp && !strcmp(str, s_commandLineIp))) && strlen(str) >= strlen(officialIp)) {
+    if (str && (contains(possibleConnectIps, str) || (*s_commandLineIp && !strcmp(str, s_commandLineIp))) && strlen(str) < sizeof(s_spoofedIp)) {
         possibleConnectIps.clear();
         strcpy_s(s_spoofedIp, str);
+        IP_LOG("ip fix: %s split as %s", s_spoofedIp, officialIp);
+        if (strlen(str) < strlen(officialIp)) {
+            // too short to hold the official address, which is split from a copy of its own instead
+            strcpy_s(s_officialCopy, officialIp);
+            return real_strtok_s(s_officialCopy, delimiter, context);
+        }
         strcpy_s(str, strlen(str) + 1, officialIp);
     }
     return real_strtok_s(str, delimiter, context);
@@ -68,6 +82,7 @@ static unsigned long WSAAPI zzinet_addr(_In_z_ const char* cp) {
     if (cp && !strcmp(cp, officialIp)) {
         const char* realIp = *s_spoofedIp ? s_spoofedIp : s_commandLineIp;
         if (*realIp) {
+            IP_LOG("ip fix: %s connects to %s", officialIp, realIp);
             return real_inet_addr(realIp);
         }
     }
