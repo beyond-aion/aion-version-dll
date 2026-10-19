@@ -83,9 +83,20 @@ static void RaiseBounds(HMODULE crySystem) {
     RaiseBound(crySystem, "height", 600, 1920);
 }
 
+/// Without a DPI awareness of its own the client sees a screen scaled above 100 % as smaller than it is, renders that size and Windows
+/// stretches the frame over the screen, blurred. A DPI setting from the compatibility tab of aion.bin comes first: the client then has its
+/// awareness already, and setting it again fails.
+static void MakeDpiAware() {
+    typedef BOOL(WINAPI* SetProcessDpiAwarenessContext_t)(DPI_AWARENESS_CONTEXT value);
+    auto setContext = (SetProcessDpiAwarenessContext_t)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetProcessDpiAwarenessContext");
+    BOOL done = setContext ? setContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) : SetProcessDPIAware();
+    MODULE_LOG("fullscreen fix: DPI aware %d (error %lu)", done, done ? 0 : GetLastError());
+}
+
 /// The client clamps FULLSCREEN_WIDTH and FULLSCREEN_HEIGHT from SystemOptionGraphics.cfg to 2560x1920, while it saves the screen
 /// size there unclamped. From the second start on, a larger screen then gets a 2560x1920 frame stretched over it, with the mouse
 /// off by the stretch. CrySystem.dll is packed in some clients, so the bounds are raised once its entry point has unpacked it.
 void InstallFullscreenFix() {
+    MakeDpiAware();
     OnModuleLoad(L"CrySystem.dll", RaiseBounds, true);
 }

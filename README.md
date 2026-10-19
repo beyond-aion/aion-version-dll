@@ -6,7 +6,7 @@ Fixes:
 - **Start:** launches the 64-bit client on Windows 11 24H2 and later, on systems with 32 or more logical processors, and 5.x clients without XignCode.
 - **Camera:** turns by raw mouse input, so it no longer jumps on Windows 10/11 and keeps working, together with the keys, while Bandicam captures the window.
 - **PrintScreen:** no longer opens the Snipping Tool over the game's own screenshot.
-- **Graphics:** no black flickering with the High Quality engine (Nvidia, and AMD with DXVK), all graphics sliders available at high resolutions, and no stretched picture or misplaced cursor on screens larger than 2560x1920.
+- **Graphics:** no black flickering with the High Quality engine (Nvidia, and AMD with DXVK), all graphics sliders available at high resolutions, no stretched picture or misplaced cursor on screens larger than 2560x1920, and no blurred picture on screens scaled above 100 % (a DPI setting in the compatibility tab of `aion.bin` still comes first).
 - **Text:** color tags in 64-bit 4.6 clients show their whole text, and `Chat.log` is written in UTF-8 with milliseconds, without question marks for letters outside the keyboard layout or lines cut at 255 bytes.
 - [DXVK](https://github.com/doitsujin/dxvk) support, which can improve performance and frame times.
 
