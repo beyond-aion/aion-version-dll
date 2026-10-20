@@ -6,7 +6,6 @@
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
 #include <detours/detours.h>
-#include "mods_log.h"
 
 static constexpr char officialIp[] = "70.5.0.18";
 static std::list<std::string> possibleConnectIps = {};
@@ -29,7 +28,6 @@ static decltype(lstrcpynA)* real_lstrcpynA = lstrcpynA;
 static LPSTR WINAPI zzlstrcpynA(_Out_writes_(iMaxLength) LPSTR lpString1, _In_ LPCSTR lpString2, _In_ int iMaxLength) {
     if (iMaxLength == 256 && contains(possibleConnectIps, lpString2)) {
         possibleConnectIps.clear();
-        ModsLog("ip fix: %s copied as %s", lpString2, officialIp);
         return real_lstrcpynA(lpString1, officialIp, iMaxLength);
     }
     return real_lstrcpynA(lpString1, lpString2, iMaxLength);
@@ -60,7 +58,6 @@ static char* __cdecl zzstrtok_s(char* str, const char* delimiter, char** context
     if (str && (contains(possibleConnectIps, str) || (*s_commandLineIp && !strcmp(str, s_commandLineIp))) && strlen(str) < sizeof(s_spoofedIp)) {
         possibleConnectIps.clear();
         strcpy_s(s_spoofedIp, str);
-        ModsLog("ip fix: %s split as %s", s_spoofedIp, officialIp);
         if (strlen(str) < strlen(officialIp)) {
             // too short to hold the official address, which is split from a copy of its own instead
             strcpy_s(s_officialCopy, officialIp);
@@ -77,7 +74,6 @@ static unsigned long WSAAPI zzinet_addr(_In_z_ const char* cp) {
     if (cp && !strcmp(cp, officialIp)) {
         const char* realIp = *s_spoofedIp ? s_spoofedIp : s_commandLineIp;
         if (*realIp) {
-            ModsLog("ip fix: %s connects to %s", officialIp, realIp);
             return real_inet_addr(realIp);
         }
     }
