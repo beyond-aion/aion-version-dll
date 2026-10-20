@@ -40,7 +40,14 @@ static void MakePrefix() {
     s_prefixLength = length > 0 ? length : 0;
 }
 
+// The server puts a zero-width space in front of every part after the first of a message it had to split: those parts continue
+// the line before and get no time of their own.
+static constexpr wchar_t CONTINUATION_MARK = L'\u200B';
+
 static __int64 __fastcall zzChatAddMessage(void* chat, int type, const wchar_t* text) {
+    if (text && *text == CONTINUATION_MARK) {
+        return real_ChatAddMessage(chat, type, text + 1);
+    }
     if (!text || !*text || type >= FIRST_NON_CHAT_TYPE || (type >= FIRST_ALERT_TYPE && !real_ShowAlert)) {
         return real_ChatAddMessage(chat, type, text);
     }
