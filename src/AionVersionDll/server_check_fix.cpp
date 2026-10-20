@@ -1,4 +1,5 @@
-#include "mods.h"
+#include "code_patch.h"
+#include "mods_log.h"
 
 /// About once in 500 experience updates the client compares the address of the game server against a list of official servers and private
 /// networks. On any other server, 127.0.0.1 included, it marks itself and crashes on purpose with the next other player who comes into

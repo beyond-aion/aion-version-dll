@@ -227,6 +227,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="camera_fix.cpp" />
+    <ClCompile Include="code_patch.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="color_tag_fix.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
@@ -243,6 +247,7 @@
     </ClCompile>
     <ClCompile Include="ip_fix.cpp" />
     <ClCompile Include="module_load.cpp" />
+    <ClCompile Include="mods_log.cpp" />
     <ClCompile Include="printscreen_fix.cpp" />
     <ClCompile Include="mods.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
@@ -340,10 +345,12 @@
     <None Include="version.def" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="code_patch.h" />
     <ClInclude Include="exports.h" />
     <ClInclude Include="chat_log_fix.h" />
     <ClInclude Include="module_load.h" />
     <ClInclude Include="mods.h" />
+    <ClInclude Include="mods_log.h" />
     <ClInclude Include="ping.h" />
     <ClInclude Include="resource.h" />
   </ItemGroup>

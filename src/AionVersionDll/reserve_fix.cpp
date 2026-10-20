@@ -1,4 +1,4 @@
-#include "mods.h"
+#include "mods_log.h"
 #include <detours/detours.h>
 
 // The pool of CrySystem looks its blocks up in a page table that only covers the first 16 GB of the address space, without a bounds check.
