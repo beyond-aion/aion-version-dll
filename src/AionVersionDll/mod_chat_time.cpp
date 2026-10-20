@@ -7,11 +7,14 @@
 
 // Message types below 73 are chat channels, which go through a text filter first; 203..205 are GM alerts that also go to the screen
 // center, which gets them without the time; from 206 on they are debug output.
+static constexpr int FIRST_SYSTEM_CHAT_TYPE = 53; // MT_SYSMSG_HIGH_PRI
 static constexpr int FIRST_SYSTEM_TYPE = 73;
 static constexpr int FIRST_ALERT_TYPE = 203;
 static constexpr int FIRST_NON_CHAT_TYPE = 206;
 static constexpr size_t MAX_CHAT_TEXT = 4096;
 static const char GM_ALERT_STYLE[] = "v3_system_gm_alert";
+// The server can put a zero-width space in front subsequent message parts of a long system chat message it had to split: those parts get no time prefix
+static constexpr wchar_t CONTINUATION_MARK = L'\u200B';
 
 typedef __int64(__fastcall* ChatAddMessage_t)(void* chat, int type, const wchar_t* text);
 typedef __int64(__fastcall* FilterChatText_t)(void* filter, wchar_t* text, int size);
@@ -40,12 +43,8 @@ static void MakePrefix() {
     s_prefixLength = length > 0 ? length : 0;
 }
 
-// The server puts a zero-width space in front of every part after the first of a message it had to split: those parts continue
-// the line before and get no time of their own.
-static constexpr wchar_t CONTINUATION_MARK = L'\u200B';
-
 static __int64 __fastcall zzChatAddMessage(void* chat, int type, const wchar_t* text) {
-    if (text && *text == CONTINUATION_MARK) {
+    if (text && type >= FIRST_SYSTEM_CHAT_TYPE && *text == CONTINUATION_MARK) {
         return real_ChatAddMessage(chat, type, text + 1);
     }
     if (!text || !*text || type >= FIRST_NON_CHAT_TYPE || (type >= FIRST_ALERT_TYPE && !real_ShowAlert)) {
