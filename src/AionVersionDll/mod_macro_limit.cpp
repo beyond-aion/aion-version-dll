@@ -41,12 +41,14 @@ void InstallMacroLimit(HMODULE game) {
         if (sites.size() != 2) {
             continue;
         }
-        int atStart = 0;
+        // both in code, which data has no unwind entries for, and only the one in the creation right at the start of its function
+        int inCode = 0, atStart = 0;
         for (BYTE* site : sites) {
             BYTE* function = FunctionStart(site);
+            inCode += function != nullptr;
             atStart += function && site - function < 0x20;
         }
-        if (atStart == 1) {
+        if (inCode == 2 && atStart == 1) {
             if (!found.empty()) {
                 ModsLog("macro limit: more than one candidate");
                 return;
