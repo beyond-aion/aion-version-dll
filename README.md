@@ -66,7 +66,7 @@ Optional additions to the game client, which can be enabled via `mods.ini`:
 - **Faster loading:** different settings to speed up client start and exit times.
 - **UI scale (5.x):** different settings to resolve UI scaling issues at high resolutions.
 
-The mods find their places in the client by content rather than by fixed addresses, so they work with different client versions (4.6, 4.8 and 5.8 have been verified). A mod that finds nothing to change simply stays off, which `mods.log` next to `version.dll` shows, together with any problems in `mods.ini`. When the client crashes, `mods.log` also gets the crash: where it happened, the registers and the calls that led there.
+The mods find their places in the client by content rather than by fixed addresses, so they work with different client versions (3.9, 4.6, 4.8 and 5.8 have been verified; in 3.9 the quest targets show nothing, as its data has no quest target effect and the quest icons are not found there). A mod that finds nothing to change simply stays off, which `mods.log` next to `version.dll` shows, together with any problems in `mods.ini`. When the client crashes, `mods.log` also gets the crash: where it happened, the registers and the calls that led there.
 
 ## Building
 This project depends on [MS Detours](https://github.com/Microsoft/Detours), [libdeflate](https://github.com/ebiggers/libdeflate) and [mimalloc](https://github.com/microsoft/mimalloc), which [vcpkg](https://vcpkg.io) fetches and builds as static libraries on the first build, as listed in `vcpkg.json`. Visual Studio 2026 includes vcpkg, so the project builds straight away; another vcpkg is used when `VCPKG_ROOT` points to it. The 64-bit build copies `mods.ini` next to `version.dll`.
@@ -95,9 +95,9 @@ d3d9.forceSamplerTypeSpecConstants = True
 # Create the Vulkan surface on the first frame (helps if the window stays black)
 d3d9.deferSurfaceCreation = True
 
-# Only against single frames of 30-40 ms near certain animated models: the client's animation code reads vertex buffers back on
-# the CPU, which on some systems is very slow from the uncached memory DXVK puts them in. Leave it off otherwise, it does not
-# make frames shorter in general and made them slightly longer in a crowd of 300 monsters
+# Turn on only if single frames take 30-40 ms near certain animated models. The client's animation code reads their vertex
+# buffers back on the CPU, which on some systems is very slow from the uncached memory DXVK puts them in. It does not make
+# frames shorter otherwise, and made them slightly longer in a crowd of 300 monsters
 # d3d9.cachedWriteOnlyBuffers = True
 ```
 You can check the DXVK documentation for more info about all possible config values.
