@@ -27,6 +27,9 @@ std::vector<BYTE*> FindAllLeasTo(HMODULE module, const void* target);
 /// Finds a direct call (E8 rel32) to target.
 BYTE* FindCallTo(HMODULE module, const void* target);
 
+/// All direct calls (E8 rel32) to target, in address order.
+std::vector<BYTE*> FindAllCallsTo(HMODULE module, const void* target);
+
 /// Start of the function containing address, following chained unwind entries back to the primary one.
 BYTE* FunctionStart(const void* address);
 

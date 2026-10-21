@@ -169,6 +169,19 @@ BYTE* FindCallTo(HMODULE module, const void* target) {
     return result;
 }
 
+std::vector<BYTE*> FindAllCallsTo(HMODULE module, const void* target) {
+    BYTE* begin = (BYTE*)module;
+    BYTE* end = begin + ModuleImageSize(module) - 5;
+    std::vector<BYTE*> found;
+    ForEachByte(begin, end, 0, 0xE8, [&](BYTE* c) {
+        if (ResolveRip(c + 1, c + 5) == target) {
+            found.push_back(c);
+        }
+        return false;
+    });
+    return found;
+}
+
 BYTE* FunctionStart(const void* address) {
     DWORD64 imageBase;
     PRUNTIME_FUNCTION function = RtlLookupFunctionEntry((DWORD64)address, &imageBase, nullptr);

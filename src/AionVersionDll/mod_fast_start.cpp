@@ -2,7 +2,12 @@
 #include "module_load.h"
 #include <stdarg.h>
 #include <stdlib.h>
+#include <algorithm>
+#include <array>
+#include <map>
+#include <memory_resource>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 #include <intrin.h>
@@ -347,6 +352,430 @@ static void HookRawInflate(HMODULE crySystem) {
     ModsLog("fast start: pak inflate at %p: %ld", inflate4 ? inflate4 : inflate5, DetourTransactionCommit());
 }
 
+// Opening a .pak archive, CrySystem puts the name of every file into a tree of folders (a std::map of std::string per folder, a node
+// and a string for every name, with the checked iterators of the runtime) and then writes the tree out as the flat directory it
+// keeps for the archive. While it makes that directory, the names go into a tree of our own, which writes the same bytes. A tree the
+// client keeps to write to an archive stays its own.
+//
+// The flat directory of a folder: WORD folders, WORD files; per folder { DWORD to its directory from this field, DWORD to its name
+// from the first name }; the file entries, each with the offset of its name at PAK_NAME_AT; the names, zero-terminated, the folders
+// first, each list in the order of std::map; the directories of the folders, in the same order, from the next 4-byte boundary.
+
+static const size_t PAK_ENTRY_SIZE = 40;
+static const size_t PAK_NAME_AT = 24;
+static const size_t PAK_HEADER_AT = 12; // -1 in an entry that was never set
+
+struct PakFolder {
+    explicit PakFolder(std::pmr::memory_resource* arena) : folders(arena), files(arena) {}
+    std::pmr::map<std::string_view, PakFolder*> folders;
+    std::pmr::map<std::string_view, std::array<BYTE, PAK_ENTRY_SIZE>> files;
+};
+
+/// Folders, names and nodes all live in the arena, which frees them at once.
+struct PakTree {
+    const void* tree; // the client's tree this one stands in for
+    std::pmr::monotonic_buffer_resource arena;
+    PakFolder root{ &arena };
+    // the files of a folder mostly follow one another
+    std::string_view lastFolderPath;
+    PakFolder* lastFolder = nullptr;
+    DWORD files = 0;
+};
+
+/// The tree adds a file under its path; 0 when added, 22 when the file is there already.
+typedef int(__fastcall* TreeAdd_t)(void* tree, const char* path, const BYTE* entry);
+/// The number of files in the tree.
+typedef DWORD(__fastcall* TreeCount_t)(void* tree);
+/// The size of the flat directory of the tree.
+typedef size_t(__fastcall* TreeSize_t)(void* tree);
+/// Writes the flat directory, returns its size.
+typedef size_t(__fastcall* TreeWrite_t)(void* tree, BYTE* out);
+/// Opens the archive and makes its directory.
+typedef void*(__fastcall* MakeCache_t)(void* factory, void* cache, void* path, void* arg4);
+
+static TreeAdd_t real_TreeAdd = nullptr;
+static TreeCount_t real_TreeCount = nullptr;
+static TreeSize_t real_TreeSize = nullptr;
+static TreeWrite_t real_TreeWrite = nullptr;
+static MakeCache_t real_MakeCache = nullptr;
+static int s_pakTreeAt = 0; // of the tree in the factory
+static thread_local PakTree* s_pakTree = nullptr;
+
+static PakTree* OwnPakTree(const void* tree) {
+    PakTree* own = s_pakTree;
+    return own && own->tree == tree ? own : nullptr;
+}
+
+static int AddPakFile(PakTree* own, const char* path, const BYTE* entry) {
+    size_t length = strlen(path);
+    char* copy = (char*)own->arena.allocate(length + 1, 1);
+    memcpy(copy, path, length + 1);
+    std::string_view rest(copy, length);
+    PakFolder* folder = &own->root;
+    size_t last = rest.find_last_of("/\\");
+    if (last != std::string_view::npos && rest.substr(0, last + 1) == own->lastFolderPath) {
+        folder = own->lastFolder;
+        rest.remove_prefix(last + 1);
+    } else if (last != std::string_view::npos) {
+        own->lastFolderPath = rest.substr(0, last + 1);
+        for (size_t slash; (slash = rest.find_first_of("/\\")) != std::string_view::npos; rest.remove_prefix(slash + 1)) {
+            PakFolder*& sub = folder->folders[rest.substr(0, slash)];
+            if (!sub) {
+                sub = new (own->arena.allocate(sizeof(PakFolder), alignof(PakFolder))) PakFolder(&own->arena);
+            }
+            folder = sub;
+        }
+        own->lastFolder = folder;
+    }
+    auto [file, added] = folder->files.try_emplace(rest);
+    if (!added && *(const DWORD*)(file->second.data() + PAK_HEADER_AT) != 0xFFFFFFFF) {
+        return 22;
+    }
+    memcpy(file->second.data(), entry, PAK_ENTRY_SIZE);
+    own->files += added;
+    return 0;
+}
+
+static int __fastcall zzTreeAdd(void* tree, const char* path, const BYTE* entry) {
+    PakTree* own = OwnPakTree(tree);
+    if (!own) {
+        return real_TreeAdd(tree, path, entry);
+    }
+    return AddPakFile(own, path, entry);
+}
+
+static DWORD __fastcall zzTreeCount(void* tree) {
+    PakTree* own = OwnPakTree(tree);
+    return own ? own->files : real_TreeCount(tree);
+}
+
+static size_t FolderSize(const PakFolder& folder) {
+    size_t names = 0;
+    size_t size = 4 + 8 * folder.folders.size() + PAK_ENTRY_SIZE * folder.files.size();
+    for (const auto& [name, sub] : folder.folders) {
+        names += name.size() + 1;
+        size += FolderSize(*sub);
+    }
+    for (const auto& [name, entry] : folder.files) {
+        names += name.size() + 1;
+    }
+    return size + ((names + 3) & ~(size_t)3);
+}
+
+static BYTE* WriteName(BYTE* at, std::string_view name) {
+    memcpy(at, name.data(), name.size());
+    at[name.size()] = 0;
+    return at + name.size() + 1;
+}
+
+static size_t WriteFolder(const PakFolder& folder, BYTE* out) {
+    *(WORD*)out = (WORD)folder.folders.size();
+    *(WORD*)(out + 2) = (WORD)folder.files.size();
+    BYTE* folders = out + 4;
+    BYTE* files = folders + 8 * folder.folders.size();
+    BYTE* names = files + PAK_ENTRY_SIZE * folder.files.size();
+    BYTE* name = names;
+    BYTE* at = folders;
+    for (const auto& [text, sub] : folder.folders) {
+        *(DWORD*)(at + 4) = (DWORD)(name - names);
+        name = WriteName(name, text);
+        at += 8;
+    }
+    at = files;
+    for (const auto& [text, entry] : folder.files) {
+        memcpy(at, entry.data(), PAK_ENTRY_SIZE);
+        *(DWORD*)(at + PAK_NAME_AT) = (DWORD)(name - names);
+        name = WriteName(name, text);
+        at += PAK_ENTRY_SIZE;
+    }
+    BYTE* next = (BYTE*)(((ULONG_PTR)name + 3) & ~(ULONG_PTR)3);
+    at = folders;
+    for (const auto& [text, sub] : folder.folders) {
+        *(DWORD*)at = (DWORD)(next - at);
+        next += WriteFolder(*sub, next);
+        at += 8;
+    }
+    return next - out;
+}
+
+static size_t __fastcall zzTreeSize(void* tree) {
+    PakTree* own = OwnPakTree(tree);
+    return own ? FolderSize(own->root) : real_TreeSize(tree);
+}
+
+static size_t __fastcall zzTreeWrite(void* tree, BYTE* out) {
+    PakTree* own = OwnPakTree(tree);
+    return own ? WriteFolder(own->root, out) : real_TreeWrite(tree, out);
+}
+
+static void* __fastcall zzMakeCache(void* factory, void* cache, void* path, void* arg4) {
+    if (s_pakTree) {
+        return real_MakeCache(factory, cache, path, arg4);
+    }
+    PakTree own;
+    own.tree = (BYTE*)factory + s_pakTreeAt;
+    s_pakTree = &own;
+    void* result = real_MakeCache(factory, cache, path, arg4);
+    s_pakTree = nullptr;
+    return result;
+}
+
+struct CallSite {
+    BYTE* target;
+    int thisAt; // the offset from a register that the last lea rcx before the call added, -1 for anything else in rcx
+};
+
+/// Whether the instruction writes rcx otherwise than by a lea from a register (only the forms the compiler uses for it).
+static bool WritesRcx(const BYTE* ip) {
+    BYTE rex = (ip[0] & 0xF0) == 0x40 ? ip[0] : 0;
+    const BYTE* op = rex ? ip + 1 : ip;
+    BYTE reg = (op[1] >> 3) & 7;
+    if ((op[0] == 0x8B || op[0] == 0x8D) && reg == 1 && !(rex & 4)) {
+        return true;
+    }
+    if ((op[0] == 0x89 || op[0] == 0x33 || op[0] == 0x31) && (op[1] >> 6) == 3 && (op[1] & 7) == 1 && !(rex & 1)) {
+        return true;
+    }
+    return op[0] == 0xB9 && !(rex & 1);
+}
+
+/// The direct calls of a function, with what rcx holds for each.
+static std::vector<CallSite> CallsOf(BYTE* function) {
+    std::vector<CallSite> calls;
+    int thisAt = -1;
+    BYTE* end = FunctionBodyEnd(function, 0x2000);
+    for (BYTE* ip = function; ip < end;) {
+        BYTE* next = (BYTE*)DetourCopyInstruction(nullptr, nullptr, ip, nullptr, nullptr);
+        if (!next || next <= ip) {
+            break;
+        }
+        bool rex = ip[0] == 0x48 || ip[0] == 0x49;
+        if (rex && ip[1] == 0x8D && ((ip[2] >> 3) & 7) == 1 && (ip[2] & 7) != 4) {
+            BYTE mod = ip[2] >> 6;
+            thisAt = mod == 1 ? (signed char)ip[3] : mod == 2 ? *(INT32*)(ip + 3) : mod == 0 && (ip[2] & 7) != 5 ? 0 : -1;
+        } else if (ip[0] == 0xE8) {
+            calls.push_back({ ResolveRip(ip + 1, ip + 5), thisAt });
+            thisAt = -1;
+        } else if ((ip[0] == 0xFF && ((ip[1] >> 3) & 7) == 2) || ((ip[0] & 0xF0) == 0x40 && ip[1] == 0xFF && ((ip[2] >> 3) & 7) == 2)
+            || WritesRcx(ip)) {
+            thisAt = -1;
+        }
+        ip = next;
+    }
+    return calls;
+}
+
+static bool Calls(BYTE* function, BYTE* target) {
+    for (const CallSite& call : CallsOf(function)) {
+        if (call.target == target) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// The function that names itself in its messages.
+static BYTE* NamedFunction(HMODULE module, const char* name) {
+    const void* text = FindBytes(module, name, strlen(name) + 1);
+    BYTE* lea = text ? FindLeaTo(module, text) : nullptr;
+    return lea ? FunctionStart(lea) : nullptr;
+}
+
+// 4.x clients lower the case of every name in the central directory of an archive character by character, through the checked
+// iterators of a std::string, before adding it (5.x clients do it inline). While a directory is made, the central directory is read
+// here instead, with the same checks; anything out of the ordinary goes to the client's function, which reports it.
+
+/// Reads the central directory and adds its files; false on any error, which it reports.
+typedef bool(__fastcall* BuildFileEntryMap_t)(BYTE* factory);
+typedef bool(__fastcall* FactorySeek_t)(BYTE* factory, DWORD offset, int origin);
+typedef bool(__fastcall* FactoryRead_t)(BYTE* factory, void* buffer, DWORD size);
+typedef void*(__fastcall* PakAlloc_t)(size_t size);
+typedef void(__fastcall* PakFree_t)(void* block);
+typedef int(__cdecl* Tolower_t)(int c);
+
+static BuildFileEntryMap_t real_BuildFileEntryMap = nullptr;
+static FactorySeek_t s_factorySeek = nullptr;
+static FactoryRead_t s_factoryRead = nullptr;
+static PakAlloc_t s_pakAlloc = nullptr;
+static PakFree_t s_pakFree = nullptr;
+static Tolower_t s_tolower = nullptr;
+
+// the factory of 4.x
+static const BYTE FACTORY_INIT_METHOD = 0x10; // from 1 on, the local header of every file is read and checked as well
+static const BYTE FACTORY_CDR_SIZE = 0x24;
+static const BYTE FACTORY_CDR_OFFSET = 0x28;
+static const BYTE FACTORY_WANTS_MAP = 0x88; // a std::map of the names besides the tree
+static const DWORD CDR_SIGNATURE = 0x02014B50;
+
+/// The file entry of a record of the central directory, as the client makes it.
+static void FileEntryOf(const BYTE* record, BYTE* entry) {
+    memset(entry, 0, PAK_ENTRY_SIZE);
+    *(UINT64*)entry = *(const UINT64*)(record + 16); // CRC and compressed size
+    *(DWORD*)(entry + 8) = *(const DWORD*)(record + 24);
+    *(DWORD*)(entry + PAK_HEADER_AT) = *(const DWORD*)(record + 42);
+    *(DWORD*)(entry + 16) = 0xFFFFFFFF; // the data offset, not known yet
+    *(WORD*)(entry + 20) = *(const WORD*)(record + 10);
+    *(DWORD*)(entry + 28) = *(const DWORD*)record;
+    *(WORD*)(entry + 32) = *(const WORD*)(record + 12);
+    *(WORD*)(entry + 34) = *(const WORD*)(record + 14);
+    *(DWORD*)(entry + 36) = *(const DWORD*)(record + 20) + *(const WORD*)(record + 28) + *(const DWORD*)(record + 42) + 30;
+}
+
+/// Adds the files of the central directory; false when a record is out of the ordinary.
+template <typename Add> static bool AddCentralDirectory(const BYTE* factory, const BYTE* cdr, DWORD size, Add add) {
+    static thread_local std::string name;
+    const BYTE* end = cdr + size;
+    DWORD archiveEnd = *(const DWORD*)(factory + FACTORY_CDR_OFFSET);
+    for (const BYTE* record = cdr; record + 46 <= end && (*(const DWORD*)record == CDR_SIGNATURE || *(const DWORD*)record == ~CDR_SIGNATURE);) {
+        WORD nameLength = *(const WORD*)(record + 28);
+        const BYTE* next = record + 46 + nameLength + *(const WORD*)(record + 30) + *(const WORD*)(record + 32);
+        bool stored = *(const WORD*)(record + 10) == 0;
+        if (next > end || *(const DWORD*)(record + 42) > archiveEnd || (stored && *(const DWORD*)(record + 24) != *(const DWORD*)(record + 20))) {
+            return false;
+        }
+        name.assign((const char*)record + 46, nameLength);
+        for (char& c : name) {
+            c = (BYTE)c < 0x80 ? (c >= 'A' && c <= 'Z' ? c + 32 : c) : (char)s_tolower(c);
+        }
+        BYTE entry[PAK_ENTRY_SIZE];
+        FileEntryOf(record, entry);
+        add(name.c_str(), entry);
+        record = next;
+    }
+    return true;
+}
+
+static bool __fastcall zzBuildFileEntryMap(BYTE* factory) {
+    PakTree* own = OwnPakTree(factory + s_pakTreeAt);
+    if (!own || *(const int*)(factory + FACTORY_INIT_METHOD) >= 1 || factory[FACTORY_WANTS_MAP]) {
+        return real_BuildFileEntryMap(factory);
+    }
+    if (!s_factorySeek(factory, *(const DWORD*)(factory + FACTORY_CDR_OFFSET), 0)) {
+        return false;
+    }
+    DWORD size = *(const DWORD*)(factory + FACTORY_CDR_SIZE);
+    if (!size) {
+        return true;
+    }
+    BYTE* cdr = (BYTE*)s_pakAlloc(size);
+    if (!cdr) {
+        return real_BuildFileEntryMap(factory);
+    }
+    if (!s_factoryRead(factory, cdr, size)) {
+        s_pakFree(cdr);
+        return false;
+    }
+    bool plain = AddCentralDirectory(factory, cdr, size, [own](const char* path, const BYTE* entry) { AddPakFile(own, path, entry); });
+    s_pakFree(cdr);
+    if (plain) {
+        return true;
+    }
+    // the client's function starts over and reports the record
+    own->root.folders.clear();
+    own->root.files.clear();
+    own->lastFolderPath = {};
+    own->lastFolder = nullptr;
+    own->files = 0;
+    return real_BuildFileEntryMap(factory);
+}
+
+/// The 4.x function reads the size and offset of the central directory at FACTORY_CDR_SIZE and FACTORY_CDR_OFFSET; its first calls
+/// are Seek, the allocator, Read, the release of the block and AddFileEntry, which checks FACTORY_INIT_METHOD and FACTORY_WANTS_MAP.
+/// Must be called inside an open Detours transaction; returns the function when it is hooked.
+static BYTE* HookBuildFileEntryMap(HMODULE crySystem, BYTE* addFile) {
+    static const BYTE PROLOGUE[] = { 0x48, 0x81, 0xEC, 0xA8, 0x00, 0x00, 0x00, 0x8B, 0x51, FACTORY_CDR_OFFSET, 0x45, 0x33, 0xC0 };
+    static const BYTE SIZE_READ[] = { 0x8B, 0x45, FACTORY_CDR_SIZE, 0x85, 0xC0 };
+    static const BYTE INIT_CHECK[] = { 0x83, 0x7F, FACTORY_INIT_METHOD, 0x01 };
+    static const BYTE MAP_CHECK[] = { 0x80, 0xBF, FACTORY_WANTS_MAP, 0x00, 0x00, 0x00, 0x00 };
+    BYTE* build = NamedFunction(crySystem, "ZipDir::CacheFactory::BuildFileEntryMap");
+    BYTE* seek = NamedFunction(crySystem, "ZipDir::CacheFactory::Seek");
+    BYTE* read = NamedFunction(crySystem, "ZipDir::CacheFactory::Read");
+    if (!build || memcmp(build, PROLOGUE, sizeof(PROLOGUE)) || memcmp(build + 0x31, SIZE_READ, sizeof(SIZE_READ))) {
+        // 5.x clients lower the case inline
+        return nullptr;
+    }
+    if (!seek || !read || !s_tolower) {
+        ModsLog("fast start: pak names not found (Seek %p, Read %p, tolower %p)", seek, read, s_tolower);
+        return nullptr;
+    }
+    BYTE* addEnd = FunctionBodyEnd(addFile, 0x1000);
+    auto inAdd = [&](const BYTE* bytes, size_t length) { return std::search(addFile, addEnd, bytes, bytes + length) != addEnd; };
+    std::vector<CallSite> calls = CallsOf(build);
+    if (calls.size() < 6 || calls[0].target != seek || calls[2].target != read || calls[4].target != addFile || calls[3].target != calls[5].target
+        || !inAdd(INIT_CHECK, sizeof(INIT_CHECK)) || !inAdd(MAP_CHECK, sizeof(MAP_CHECK))) {
+        ModsLog("fast start: pak names at %p do not read as expected", build);
+        return nullptr;
+    }
+    s_factorySeek = (FactorySeek_t)seek;
+    s_factoryRead = (FactoryRead_t)read;
+    s_pakAlloc = (PakAlloc_t)calls[1].target;
+    s_pakFree = (PakFree_t)calls[3].target;
+    real_BuildFileEntryMap = (BuildFileEntryMap_t)build;
+    DetourAttach(&(PVOID&)real_BuildFileEntryMap, zzBuildFileEntryMap);
+    return build;
+}
+
+/// Finds the functions of the tree from the factory that fills it: AddFileEntry adds to it and Prepare counts its files, both with the
+/// tree at the same offset in the factory; of the callers of Prepare, the one making the directory then asks the tree for its size and
+/// has it written, the one reading an archive for writing does neither.
+static void HookPakTree(HMODULE crySystem) {
+    if (real_MakeCache) {
+        return;
+    }
+    BYTE* addFile = NamedFunction(crySystem, "ZipDir::CacheFactory::AddFileEntry");
+    BYTE* prepare = NamedFunction(crySystem, "ZipDir::CacheFactory::Prepare");
+    if (!addFile || !prepare) {
+        ModsLog("fast start: pak tree not found (AddFileEntry %p, Prepare %p)", addFile, prepare);
+        return;
+    }
+    std::vector<CallSite> adds = CallsOf(addFile);
+    BYTE *add = nullptr, *count = nullptr, *size = nullptr, *write = nullptr, *makeCache = nullptr;
+    for (const CallSite& counting : CallsOf(prepare)) {
+        for (const CallSite& adding : adds) {
+            if (counting.thisAt > 0 && adding.thisAt == counting.thisAt && adding.target != counting.target) {
+                s_pakTreeAt = counting.thisAt;
+                add = adding.target;
+                count = counting.target;
+            }
+        }
+    }
+    for (BYTE* call : FindAllCallsTo(crySystem, prepare)) {
+        BYTE* caller = FunctionStart(call);
+        std::vector<BYTE*> treeCalls;
+        for (const CallSite& site : caller ? CallsOf(caller) : std::vector<CallSite>()) {
+            if (add && site.thisAt == s_pakTreeAt) {
+                treeCalls.push_back(site.target);
+            }
+        }
+        if (treeCalls.size() == 2 && treeCalls[0] != treeCalls[1]) {
+            makeCache = caller;
+            size = treeCalls[0];
+            write = treeCalls[1];
+        }
+    }
+    // both walk the tree by calling themselves for every folder
+    if (!makeCache || !Calls(size, size) || !Calls(write, write)) {
+        ModsLog("fast start: pak tree not found (add %p, count %p at +%x, size %p, write %p, directory %p)", add, count, s_pakTreeAt, size,
+            write, makeCache);
+        return;
+    }
+    real_TreeAdd = (TreeAdd_t)add;
+    real_TreeCount = (TreeCount_t)count;
+    real_TreeSize = (TreeSize_t)size;
+    real_TreeWrite = (TreeWrite_t)write;
+    real_MakeCache = (MakeCache_t)makeCache;
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+    DetourAttach(&(PVOID&)real_TreeAdd, zzTreeAdd);
+    DetourAttach(&(PVOID&)real_TreeCount, zzTreeCount);
+    DetourAttach(&(PVOID&)real_TreeSize, zzTreeSize);
+    DetourAttach(&(PVOID&)real_TreeWrite, zzTreeWrite);
+    DetourAttach(&(PVOID&)real_MakeCache, zzMakeCache);
+    BYTE* names = HookBuildFileEntryMap(crySystem, addFile);
+    ModsLog("fast start: pak tree at %p, %p, %p, %p (+%x), directory at %p, names at %p: %ld", add, count, size, write, s_pakTreeAt,
+        makeCache, names, DetourTransactionCommit());
+}
+
 /// 5.x clients show their logos in CrySystem while the game data loads, in phases timed by the milliseconds since each began: shown
 /// for 2000, faded in over 750, shown for 2000, then faded out over 750 once the loading thread is done (cmp ebx, 7D0h / 2EEh), 5.5
 /// seconds even when the data is long loaded. All six limits become 0, so the logos end as soon as the loading does.
@@ -377,6 +806,8 @@ static HMODULE s_crySystem = nullptr;
 
 static void* __cdecl zzCreateSystemInterface(void* params) {
     RestoreImportCalls(s_crySystem);
+    // the stubs of the packer leave a byte of junk after each call, so the calls of the functions read right only now
+    HookPakTree(s_crySystem);
     return real_CreateSystemInterface(params);
 }
 
@@ -396,11 +827,18 @@ static void RestoreImportCallsBeforeUse(HMODULE crySystem) {
 }
 
 static void OnCrySystem(HMODULE crySystem) {
+    // the runtime is a side-by-side assembly, found by name only while CrySystem loads
+    if (HMODULE runtime = GetModuleHandleW(L"MSVCR80.dll")) {
+        s_tolower = (Tolower_t)GetProcAddress(runtime, "tolower");
+    }
     RestoreImportCallsBeforeUse(crySystem);
     HookRuntime();
     ShortenClockMeasure(crySystem);
     HookZlib(crySystem);
     HookRawInflate(crySystem);
+    if (!HasImportStubs(crySystem)) {
+        HookPakTree(crySystem);
+    }
     if (g_modsConfig.fastStart == FAST_START_FULL && GetModuleHandleW(L"MSVCR120.dll")) {
         SkipIntroLogos(crySystem);
     }
