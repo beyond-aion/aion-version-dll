@@ -60,6 +60,7 @@ void InstallCrashLog();
 void InstallReserveFix();
 void InstallColorTagFix(HMODULE game);
 void InstallServerCheckFix(HMODULE game);
+void InstallLightRectFixOnLoad();
 
 /// The fixes of Game.dll, once its entry point has run.
 static void InstallGameFixes(HMODULE game) {
@@ -116,6 +117,7 @@ static void InstallPatch(HINSTANCE self) {
     Install64BitStackFix();
     InstallCrashLog();
     InstallReserveFix();
+    InstallLightRectFixOnLoad();
     OnModuleLoad(L"Game.dll", InstallGameFixes, true);
     InstallMods();
 #endif
