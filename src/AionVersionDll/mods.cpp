@@ -48,6 +48,7 @@ static const Setting SETTINGS[] = {
     { L"Stats", L"Enabled", Setting::Bool, &g_modsConfig.statPrecision, 0 },
     { L"QuestTargets", L"Enabled", Setting::Bool, &g_modsConfig.questTargets, 0 },
     { L"MultiClient", L"Enabled", Setting::Bool, &g_modsConfig.multiClient, 0 },
+    { L"Login", L"SkipAgreement", Setting::Bool, &g_modsConfig.skipAgreement, 0 },
     { L"Performance", L"LoadingMode", Setting::Int, &g_modsConfig.fastStart, FAST_START_OFF, FAST_START_OFF, FAST_START_FULL },
     { L"Performance", L"Mimalloc", Setting::Bool, &g_modsConfig.mimalloc, 0 },
     { L"UiScale", L"Max", Setting::Int, &g_modsConfig.uiScaleMax, 130, 130, 400 },
@@ -106,6 +107,9 @@ static void InstallGameMods(HMODULE game) {
     }
     if (g_modsConfig.multiClient) {
         InstallMultiClient(game);
+    }
+    if (g_modsConfig.skipAgreement) {
+        InstallSkipAgreement(game);
     }
     if (g_modsConfig.fastStart == FAST_START_FULL) {
         InstallSkipLogo(game);
