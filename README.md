@@ -38,7 +38,7 @@ This project depends on [MS Detours](https://github.com/Microsoft/Detours), [lib
 DXVK can be tweaked via an optional config file. See below for recommended settings.
 
 ## ⚙️ Recommended DXVK Configuration (optional)
-Create a file named `dxvk.conf` in the **game root directory** (NOT `bin32/bin64`). The options below are checked against DXVK 3.1.1[^1].
+Create a file named `dxvk.conf` in the **game root directory** (NOT `bin32/bin64`). The options below are checked against DXVK 3.1.1.
 ```ini
 # Enable FPS counter (different from the one the game client provides)
 # dxvk.hud = fps
@@ -54,10 +54,8 @@ d3d9.forceSamplerTypeSpecConstants = True
 # Create the Vulkan surface on the first frame (helps if the window stays black)
 d3d9.deferSurfaceCreation = True
 
-# Single frames of 30-40 ms with many characters around: the client's animation code reads vertex buffers back on the CPU,
-# which is slow from the uncached memory DXVK puts them in
-# d3d9.cachedWriteOnlyBuffers = True
+# Performance: the client's animation code reads vertex buffers back on the CPU, which is slow from the uncached memory
+# DXVK puts them in by default; cached memory gives shorter frames with many characters around
+d3d9.cachedWriteOnlyBuffers = True
 ```
 You can check the DXVK documentation for more info about all possible config values.
-
-[^1]: `d3d9.cachedDynamicBuffers` from older versions of this guide no longer exists in DXVK; `d3d9.cachedWriteOnlyBuffers` replaced it. It can cost some GPU performance, so turn it on only against the stutter described above. The DXVK defaults are the fastest choice for everything else (for example, shader compilation already uses all CPU cores).
