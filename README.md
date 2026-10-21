@@ -54,8 +54,9 @@ d3d9.forceSamplerTypeSpecConstants = True
 # Create the Vulkan surface on the first frame (helps if the window stays black)
 d3d9.deferSurfaceCreation = True
 
-# Performance: the client's animation code reads vertex buffers back on the CPU, which is slow from the uncached memory
-# DXVK puts them in by default; cached memory gives shorter frames with many characters around
-d3d9.cachedWriteOnlyBuffers = True
+# Only against single frames of 30-40 ms near certain animated models: the client's animation code reads vertex buffers back on
+# the CPU, which on some systems is very slow from the uncached memory DXVK puts them in. Leave it off otherwise, it does not
+# make frames shorter in general and made them slightly longer in a crowd of 300 monsters
+# d3d9.cachedWriteOnlyBuffers = True
 ```
 You can check the DXVK documentation for more info about all possible config values.
