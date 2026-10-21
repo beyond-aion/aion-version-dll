@@ -24,7 +24,7 @@ struct ModsConfig {
     bool questTargets;
     bool multiClient;
     bool skipAgreement;
-    int uiScaleMax; // percent
+    bool uiScaleFit;
     int largeGlyphFrom; // pixel height
     int fastStart; // FAST_START_*
     bool mimalloc;

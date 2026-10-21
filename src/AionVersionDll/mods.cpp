@@ -51,7 +51,7 @@ static const Setting SETTINGS[] = {
     { L"Login", L"SkipAgreement", Setting::Bool, &g_modsConfig.skipAgreement, 0 },
     { L"Performance", L"LoadingMode", Setting::Int, &g_modsConfig.fastStart, FAST_START_OFF, FAST_START_OFF, FAST_START_FULL },
     { L"Performance", L"Mimalloc", Setting::Bool, &g_modsConfig.mimalloc, 0 },
-    { L"UiScale", L"Max", Setting::Int, &g_modsConfig.uiScaleMax, 130, 130, 400 },
+    { L"UiScale", L"Fit", Setting::Bool, &g_modsConfig.uiScaleFit, 0 },
     { L"UiScale", L"LargeGlyphFrom", Setting::Int, &g_modsConfig.largeGlyphFrom, 33, 8, 64 },
 };
 
@@ -102,7 +102,7 @@ static void InstallGameMods(HMODULE game) {
     if (g_modsConfig.questTargets) {
         InstallQuestTargets(game);
     }
-    if (g_modsConfig.uiScaleMax > 130) {
+    if (g_modsConfig.uiScaleFit) {
         InstallUiScale(game);
     }
     if (g_modsConfig.multiClient) {
