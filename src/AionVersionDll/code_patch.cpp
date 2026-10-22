@@ -32,9 +32,11 @@ static size_t AnchorOf(const BYTE* bytes, const char* fixed, size_t length) {
     return best;
 }
 
-/// Calls found(c) for every c in [begin, end) with c[anchor] == value, until it returns true.
+/// Calls found(c) for every c in the module with room for length bytes and c[anchor] == value, until it returns true.
 template <typename Found>
-static void ForEachByte(BYTE* begin, BYTE* end, size_t anchor, BYTE value, Found found) {
+static void ForEachByte(HMODULE module, size_t length, size_t anchor, BYTE value, Found found) {
+    BYTE* begin = (BYTE*)module;
+    BYTE* end = begin + ModuleImageSize(module) - length + 1;
     for (BYTE* c = begin; c < end;) {
         BYTE* hit = (BYTE*)memchr(c + anchor, value, end - c);
         if (!hit) {
@@ -64,14 +66,12 @@ std::vector<BYTE*> FindAllPatterns(HMODULE module, const char* pattern) {
         }
     }
     size_t length = bytes.size();
-    BYTE* begin = (BYTE*)module;
-    BYTE* end = begin + ModuleImageSize(module) - length;
     std::vector<BYTE*> found;
     size_t anchor = AnchorOf(bytes.data(), fixed.data(), length);
     if (anchor == length) {
         return found;
     }
-    ForEachByte(begin, end, anchor, bytes[anchor], [&](BYTE* c) {
+    ForEachByte(module, length, anchor, bytes[anchor], [&](BYTE* c) {
         size_t i = 0;
         while (i < length && (!fixed[i] || c[i] == bytes[i])) {
             i++;
@@ -94,12 +94,10 @@ bool InModule(HMODULE module, const void* address, size_t size) {
 }
 
 BYTE* FindBytes(HMODULE module, const void* bytes, size_t length) {
-    BYTE* begin = (BYTE*)module;
-    BYTE* end = begin + ModuleImageSize(module) - length;
     std::vector<char> fixed(length, 1);
     size_t anchor = AnchorOf((const BYTE*)bytes, fixed.data(), length);
     BYTE* result = nullptr;
-    ForEachByte(begin, end, anchor, ((const BYTE*)bytes)[anchor], [&](BYTE* c) {
+    ForEachByte(module, length, anchor, ((const BYTE*)bytes)[anchor], [&](BYTE* c) {
         if (memcmp(c, bytes, length) == 0) {
             result = c;
         }
@@ -118,10 +116,8 @@ BYTE* FindRipReference(HMODULE module, const char* opcode, int length, const voi
             code[codeLength++] = (BYTE)strtoul(p, (char**)&p, 16);
         }
     }
-    BYTE* begin = (BYTE*)module;
-    BYTE* end = begin + ModuleImageSize(module) - length;
     BYTE* result = nullptr;
-    ForEachByte(begin, end, codeLength - 1, code[codeLength - 1], [&](BYTE* c) {
+    ForEachByte(module, length, codeLength - 1, code[codeLength - 1], [&](BYTE* c) {
         if (memcmp(c, code, codeLength) == 0 && ResolveRip(c + length - 4, c + length) == target) {
             result = c;
         }
@@ -131,10 +127,8 @@ BYTE* FindRipReference(HMODULE module, const char* opcode, int length, const voi
 }
 
 BYTE* FindLeaTo(HMODULE module, const void* target) {
-    BYTE* begin = (BYTE*)module;
-    BYTE* end = begin + ModuleImageSize(module) - 7;
     BYTE* result = nullptr;
-    ForEachByte(begin, end, 1, 0x8D, [&](BYTE* c) {
+    ForEachByte(module, 7, 1, 0x8D, [&](BYTE* c) {
         if ((c[0] == 0x48 || c[0] == 0x4C) && (c[2] & 0xC7) == 0x05 && ResolveRip(c + 3, c + 7) == target) {
             result = c;
         }
@@ -144,10 +138,8 @@ BYTE* FindLeaTo(HMODULE module, const void* target) {
 }
 
 std::vector<BYTE*> FindAllLeasTo(HMODULE module, const void* target) {
-    BYTE* begin = (BYTE*)module;
-    BYTE* end = begin + ModuleImageSize(module) - 7;
     std::vector<BYTE*> found;
-    ForEachByte(begin, end, 1, 0x8D, [&](BYTE* c) {
+    ForEachByte(module, 7, 1, 0x8D, [&](BYTE* c) {
         if ((c[0] == 0x48 || c[0] == 0x4C) && (c[2] & 0xC7) == 0x05 && ResolveRip(c + 3, c + 7) == target) {
             found.push_back(c);
         }
@@ -157,10 +149,8 @@ std::vector<BYTE*> FindAllLeasTo(HMODULE module, const void* target) {
 }
 
 BYTE* FindCallTo(HMODULE module, const void* target) {
-    BYTE* begin = (BYTE*)module;
-    BYTE* end = begin + ModuleImageSize(module) - 5;
     BYTE* result = nullptr;
-    ForEachByte(begin, end, 0, 0xE8, [&](BYTE* c) {
+    ForEachByte(module, 5, 0, 0xE8, [&](BYTE* c) {
         if (ResolveRip(c + 1, c + 5) == target) {
             result = c;
         }
@@ -170,10 +160,8 @@ BYTE* FindCallTo(HMODULE module, const void* target) {
 }
 
 std::vector<BYTE*> FindAllCallsTo(HMODULE module, const void* target) {
-    BYTE* begin = (BYTE*)module;
-    BYTE* end = begin + ModuleImageSize(module) - 5;
     std::vector<BYTE*> found;
-    ForEachByte(begin, end, 0, 0xE8, [&](BYTE* c) {
+    ForEachByte(module, 5, 0, 0xE8, [&](BYTE* c) {
         if (ResolveRip(c + 1, c + 5) == target) {
             found.push_back(c);
         }

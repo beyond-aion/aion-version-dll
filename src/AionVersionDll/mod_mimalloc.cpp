@@ -162,15 +162,17 @@ static void HookAllocators(HMODULE crySystem, bool beforeEntry) {
     // xor r8d, r8d; mov edx, size; call init. It keeps only its own records there now, so it starts with 1 MB; hooked too late for that,
     // what it has not used of the heap goes back.
     int heaps = 0;
-    for (BYTE* init : FindAllPatterns(crySystem, "48 8D 0D ?? ?? ?? ?? 45 33 C0 BA ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 15")) {
-        DWORD initial = 1 << 20;
-        if (ResolveRip(init + 3, init + 7) == pool && PatchMemory(init + 11, &initial, sizeof(initial))) {
-            heaps++;
+    if (error == NO_ERROR) {
+        for (BYTE* init : FindAllPatterns(crySystem, "48 8D 0D ?? ?? ?? ?? 45 33 C0 BA ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 15")) {
+            DWORD initial = 1 << 20;
+            if (ResolveRip(init + 3, init + 7) == pool && PatchMemory(init + 11, &initial, sizeof(initial))) {
+                heaps++;
+            }
         }
-    }
-    HANDLE heap = beforeEntry ? nullptr : *(HANDLE*)(pool + 8);
-    if (heap) {
-        HeapCompact(heap, 0);
+        HANDLE heap = beforeEntry ? nullptr : *(HANDLE*)(pool + 8);
+        if (heap) {
+            HeapCompact(heap, 0);
+        }
     }
     ModsLog("mimalloc: allocators at %p %s its entry point: %ld, %d pool heaps", crySystem, beforeEntry ? "before" : "after", error, heaps);
 }
