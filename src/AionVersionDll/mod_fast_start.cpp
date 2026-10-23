@@ -9,8 +9,10 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <thread>
 #include <vector>
 #include <intrin.h>
+#include <d3d9.h>
 #include <objbase.h>
 #include <dxgi.h>
 #include <bcrypt.h>
@@ -276,7 +278,7 @@ static void HookZlib(HMODULE crySystem) {
 
 // The files packed in the .pak archives are raw deflate streams, which CrySystem inflates with its zlib as it reads them, on the main
 // thread: about a third of the work of 5.8 before the login screen. libdeflate inflates a whole stream that fits the output at once;
-// anything else, such as a stream that does not fit, goes to the client's zlib.
+// a stream that does not fit goes to the client's zlib.
 
 /// 4.x: inflates src into dest, setting *destLen to the size written; 0 when done.
 typedef int(__cdecl* RawInflate4_t)(void* allocator, BYTE* dest, unsigned long* destLen, const BYTE* src, unsigned long srcLen);
@@ -316,10 +318,40 @@ static int __cdecl zzRawInflate4(void* allocator, BYTE* dest, unsigned long* des
 
 static int __cdecl zzRawInflate5(void* allocator, OutputBlock* out, unsigned long* total, const BYTE* src, unsigned long srcLen) {
     unsigned long written;
-    if (out->next || !RawInflate(src, srcLen, out->data, out->size, written)) {
+    if (!out->next) {
+        if (!RawInflate(src, srcLen, out->data, out->size, written)) {
+            return real_RawInflate5(allocator, out, total, src, srcLen);
+        }
+        out->size = written;
+        *total = written;
+        return 0;
+    }
+    // a chain (large files such as textures) is inflated at once and then cut up as the client's zlib fills it: every block up to the
+    // one the stream ends in is full, that one is cut to what it got, and the blocks after it are left as they are
+    static thread_local std::vector<BYTE> buffer;
+    size_t capacity = 0;
+    for (OutputBlock* block = out; block; block = block->next) {
+        capacity += block->size;
+    }
+    if (capacity > ULONG_MAX) {
         return real_RawInflate5(allocator, out, total, src, srcLen);
     }
-    out->size = written;
+    if (buffer.size() < capacity) {
+        buffer.resize(capacity);
+    }
+    if (!RawInflate(src, srcLen, buffer.data(), (unsigned long)capacity, written)) {
+        return real_RawInflate5(allocator, out, total, src, srcLen);
+    }
+    const BYTE* from = buffer.data();
+    unsigned long left = written;
+    OutputBlock* block = out;
+    for (; left > block->size; block = block->next) {
+        memcpy(block->data, from, block->size);
+        from += block->size;
+        left -= block->size;
+    }
+    memcpy(block->data, from, left);
+    block->size = left;
     *total = written;
     return 0;
 }
@@ -1536,6 +1568,85 @@ static void HookRandPoll(HMODULE libeay) {
     }
 }
 
+// The renderer fills a 128x128x128 A8 noise volume with D3DXFillVolumeTexture when it starts, one texel after another: 2 million calls
+// of its noise function, which only reads a table filled before. Volumes the renderer fills in A8 are filled by slices on several
+// threads instead, with the texture coordinates and the conversion of D3DX; anything else goes to D3DX.
+
+/// D3DXVECTOR4* out, const D3DXVECTOR3* texCoord, const D3DXVECTOR3* texelSize, LPVOID data
+typedef void(WINAPI* Fill3D_t)(float* out, const float* texCoord, const float* texelSize, void* data);
+typedef HRESULT(WINAPI* FillVolumeTexture_t)(IDirect3DVolumeTexture9* texture, Fill3D_t function, void* data);
+static FillVolumeTexture_t real_FillVolumeTexture = nullptr;
+
+/// D3DX dithers what it converts to fewer bits in a volume by this 4x4x4 matrix [z & 3][y & 3][x & 3]: the value is rounded down after
+/// adding (15.5 - matrix) / 16.
+static const BYTE DITHER[4][4][4] = {
+    { { 0, 8, 2, 10 }, { 6, 14, 4, 12 }, { 3, 11, 1, 9 }, { 5, 13, 7, 15 } },
+    { { 8, 2, 10, 0 }, { 12, 6, 14, 4 }, { 11, 1, 9, 3 }, { 15, 5, 13, 7 } },
+    { { 2, 10, 0, 8 }, { 4, 12, 6, 14 }, { 1, 9, 3, 11 }, { 7, 15, 5, 13 } },
+    { { 10, 0, 8, 2 }, { 14, 4, 12, 6 }, { 9, 3, 11, 1 }, { 13, 7, 15, 5 } },
+};
+
+static bool FromRenderer(const void* address) {
+    HMODULE renderer = GetModuleHandleW(L"XRenderD3D9.dll");
+    return renderer && (size_t)((const BYTE*)address - (const BYTE*)renderer) < ModuleImageSize(renderer);
+}
+
+static HRESULT WINAPI zzFillVolumeTexture(IDirect3DVolumeTexture9* texture, Fill3D_t function, void* data) {
+    D3DVOLUME_DESC desc;
+    if (!texture || !FromRenderer((const void*)function) || texture->GetLevelCount() != 1 || FAILED(texture->GetLevelDesc(0, &desc))
+        || desc.Format != D3DFMT_A8) {
+        return real_FillVolumeTexture(texture, function, data);
+    }
+    D3DLOCKED_BOX box;
+    if (FAILED(texture->LockBox(0, &box, nullptr, 0))) {
+        return real_FillVolumeTexture(texture, function, data);
+    }
+    const float texelSize[3] = { 1.0f / desc.Width, 1.0f / desc.Height, 1.0f / desc.Depth };
+    auto fillSlices = [&](UINT from, UINT step) {
+        for (UINT z = from; z < desc.Depth; z += step) {
+            for (UINT y = 0; y < desc.Height; y++) {
+                BYTE* row = (BYTE*)box.pBits + (size_t)z * box.SlicePitch + (size_t)y * box.RowPitch;
+                for (UINT x = 0; x < desc.Width; x++) {
+                    const float texCoord[3] = { (x + 0.5f) * texelSize[0], (y + 0.5f) * texelSize[1], (z + 0.5f) * texelSize[2] };
+                    float out[4];
+                    function(out, texCoord, texelSize, data);
+                    row[x] = (BYTE)(min(max(out[3], 0.0f), 1.0f) * 255.0f + (15.5f - DITHER[z & 3][y & 3][x & 3]) / 16);
+                }
+            }
+        }
+    };
+    UINT threads = min(max(std::thread::hardware_concurrency(), 1u), min(desc.Depth, 16u));
+    std::vector<std::thread> workers;
+    for (UINT i = 1; i < threads; i++) {
+        workers.emplace_back(fillSlices, i, threads);
+    }
+    fillSlices(0, threads);
+    for (std::thread& worker : workers) {
+        worker.join();
+    }
+    texture->UnlockBox(0);
+    return D3D_OK;
+}
+
+static bool FindFillVolumeTexture(HMODULE d3dx) {
+    real_FillVolumeTexture = (FillVolumeTexture_t)GetProcAddress(d3dx, "D3DXFillVolumeTexture");
+    if (!real_FillVolumeTexture) {
+        ModsLog("fast start: D3DXFillVolumeTexture not found");
+        return false;
+    }
+    return true;
+}
+
+/// When the loader loads d3dx9_38.dll later on, outside the transaction of the mods.
+static void HookFillVolumeTexture(HMODULE d3dx) {
+    if (FindFillVolumeTexture(d3dx)) {
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        DetourAttach(&(PVOID&)real_FillVolumeTexture, zzFillVolumeTexture);
+        ModsLog("fast start: D3DXFillVolumeTexture hooked: %ld", DetourTransactionCommit());
+    }
+}
+
 // Without -ncg on its command line aion.bin starts the guard of NCsoft (aegisty64.bin): it hashes the whole file to check its signature
 // and then sets it up, half a second before the client window shows. The command line the client reads gets -ncg when it has not.
 static decltype(GetCommandLineA)* real_GetCommandLineA = nullptr;
@@ -1571,6 +1682,53 @@ static void SkipGuard() {
     ModsLog("fast start: -ncg added to the command line");
 }
 
+// In pseudo fullscreen the renderer sets the size of its window as the display mode with ChangeDisplaySettingsA(CDS_FULLSCREEN), which
+// takes the driver a good while even when the display already has that size. A change of the size alone to the size the display has is
+// taken as done.
+static decltype(ChangeDisplaySettingsA)* real_ChangeDisplaySettingsA = nullptr;
+
+static LONG WINAPI zzChangeDisplaySettingsA(DEVMODEA* mode, DWORD flags) {
+    DEVMODEA current = {};
+    current.dmSize = sizeof(current);
+    if (mode && flags == CDS_FULLSCREEN && (mode->dmFields & ~(DM_PELSWIDTH | DM_PELSHEIGHT)) == 0
+        && EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &current) && mode->dmPelsWidth == current.dmPelsWidth
+        && mode->dmPelsHeight == current.dmPelsHeight) {
+        ModsLog("fast start: display already %lux%lu", current.dmPelsWidth, current.dmPelsHeight);
+        return DISP_CHANGE_SUCCESSFUL;
+    }
+    return real_ChangeDisplaySettingsA(mode, flags);
+}
+
+// The log of CrySystem 5.x opens AionLog\log.txt anew for every line ("at"), some 4000 times while the .pak archives open. Without the
+// folder AionLog every open fails after a lookup in the file system. An open for writing that failed because the path does not exist
+// fails at once for the same name for a second after.
+typedef errno_t(__cdecl* FopenS_t)(FILE** file, const char* name, const char* mode);
+static FopenS_t real_fopen_s = nullptr;
+static SRWLOCK s_missingLock = SRWLOCK_INIT;
+static std::string s_missingName;
+static DWORD s_missingSince;
+
+static errno_t __cdecl zz_fopen_s(FILE** file, const char* name, const char* mode) {
+    bool writing = name && mode && (mode[0] == 'w' || mode[0] == 'a');
+    if (writing) {
+        AcquireSRWLockShared(&s_missingLock);
+        bool missing = s_missingName == name && real_GetTickCount() - s_missingSince < 1000;
+        ReleaseSRWLockShared(&s_missingLock);
+        if (missing && file) {
+            *file = nullptr;
+            return ENOENT;
+        }
+    }
+    errno_t error = real_fopen_s(file, name, mode);
+    if (writing && error == ENOENT) {
+        AcquireSRWLockExclusive(&s_missingLock);
+        s_missingName = name;
+        s_missingSince = real_GetTickCount();
+        ReleaseSRWLockExclusive(&s_missingLock);
+    }
+    return error;
+}
+
 void InstallFastStart() {
     SkipGuard();
     KeepCaches();
@@ -1598,6 +1756,22 @@ void InstallFastStart() {
         DetourAttach(&(PVOID&)real_RegSetValueExA, zzRegSetValueExA);
     }
     OnModuleLoad(L"CrySystem.dll", OnCrySystem, true);
+    HMODULE d3dx = GetModuleHandleW(L"d3dx9_38.dll");
+    if (!d3dx) {
+        OnModuleLoad(L"d3dx9_38.dll", HookFillVolumeTexture, true);
+    } else if (FindFillVolumeTexture(d3dx)) {
+        DetourAttach(&(PVOID&)real_FillVolumeTexture, zzFillVolumeTexture);
+        ModsLog("fast start: D3DXFillVolumeTexture hooked");
+    }
+    real_ChangeDisplaySettingsA = (decltype(ChangeDisplaySettingsA)*)GetProcAddress(GetModuleHandleW(L"user32.dll"), "ChangeDisplaySettingsA");
+    if (real_ChangeDisplaySettingsA) {
+        DetourAttach(&(PVOID&)real_ChangeDisplaySettingsA, zzChangeDisplaySettingsA);
+    }
+    HMODULE runtime = GetModuleHandleW(L"MSVCR120.dll");
+    real_fopen_s = runtime ? (FopenS_t)GetProcAddress(runtime, "fopen_s") : nullptr;
+    if (real_fopen_s) {
+        DetourAttach(&(PVOID&)real_fopen_s, zz_fopen_s);
+    }
 }
 
 /// The logo before the login screen fades in until 750 ms, stays until 2250 ms and fades out until 3000 ms; only then the login
