@@ -427,6 +427,14 @@ static LRESULT CALLBACK OverlayWindowProc(HWND window, UINT message, WPARAM wPar
     return CallWindowProcW(real_WindowProc, window, message, wParam, lParam);
 }
 
+static void UnhookWindow() {
+    if (s_window && real_WindowProc) {
+        SetWindowLongPtrW(s_window, GWLP_WNDPROC, (LONG_PTR)real_WindowProc);
+        real_WindowProc = nullptr;
+        s_window = nullptr;
+    }
+}
+
 static void HookWindow(HWND window) {
     if (!window || s_window) {
         return;
@@ -444,7 +452,14 @@ static HRESULT STDMETHODCALLTYPE zzPresent(IDirect3DDevice9* device, const RECT*
 static HRESULT STDMETHODCALLTYPE zzReset(IDirect3DDevice9* device, D3DPRESENT_PARAMETERS* params) {
     s_pingText.Release();
     ReleaseSavedState();
-    return real_Reset(device, params);
+
+    HWND currentWindow = s_window;
+    UnhookWindow();
+    HRESULT result = real_Reset(device, params);
+    HWND targetWindow = (params && params->hDeviceWindow) ? params->hDeviceWindow : currentWindow;
+    HookWindow(targetWindow);
+
+    return result;
 }
 
 static IDirect3DDevice9* volatile s_device = nullptr;
