@@ -13,13 +13,16 @@ bool TranslatePrintScreen(MSG* msg);
 // by how far the next WM_MOUSEMOVE lands from it. Since the Windows 10 Fall Creators Update the move messages after SetCursorPos are often
 // still relative to the old cursor position, which makes the camera jump, and while Bandicam captures the window SetCursorPos fails
 // altogether, which makes it spin. So while the camera turns, the real cursor stays where it was and the client gets a virtual one instead,
-// moved by raw mouse input.
+// moved by raw mouse input. Pointing devices that report absolute positions (pen tablets, remote desktop, virtual machines) are never put
+// back to the centre either; the virtual cursor moves by how far their position went from the last report.
 
 static HWND s_window;
 static DWORD s_windowThread;
 static ULONG_PTR s_gameStart, s_gameSize;
 static bool s_rawInput;
-static bool s_absoluteInput; // the mouse reports absolute positions (remote desktop, tablets), there are no deltas to turn by
+// the last position a device with absolute positions reported, while no relative input came after it
+static bool s_haveAbsolute;
+static POINT s_absolute;
 static bool s_turning;
 static POINT s_virtual;
 static POINT s_warp;
@@ -113,6 +116,16 @@ static void StopTurning() {
     }
 }
 
+/// Where an absolute position report puts the pointer, in pixels of the virtual desktop or of the primary monitor.
+static POINT AbsolutePosition(const RAWMOUSE& mouse) {
+    bool virtualDesktop = (mouse.usFlags & MOUSE_VIRTUAL_DESKTOP) != 0;
+    int left = virtualDesktop ? GetSystemMetrics(SM_XVIRTUALSCREEN) : 0;
+    int top = virtualDesktop ? GetSystemMetrics(SM_YVIRTUALSCREEN) : 0;
+    int width = GetSystemMetrics(virtualDesktop ? SM_CXVIRTUALSCREEN : SM_CXSCREEN);
+    int height = GetSystemMetrics(virtualDesktop ? SM_CYVIRTUALSCREEN : SM_CYSCREEN);
+    return { left + MulDiv(mouse.lLastX, width, 65536), top + MulDiv(mouse.lLastY, height, 65536) };
+}
+
 static void OnRawInput(HRAWINPUT handle) {
     if (handle == s_lastRawInput) {
         return; // peeked before it was taken
@@ -123,21 +136,30 @@ static void OnRawInput(HRAWINPUT handle) {
     if (GetRawInputData(handle, RID_INPUT, &input, &size, sizeof(RAWINPUTHEADER)) == (UINT)-1 || input.header.dwType != RIM_TYPEMOUSE) {
         return;
     }
+    LONG dx, dy;
     if (input.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) {
-        s_absoluteInput = true;
-        if (s_turning) {
-            StopTurning();
+        // the position has been through the pointer speed already
+        POINT at = AbsolutePosition(input.data.mouse);
+        bool known = s_haveAbsolute;
+        dx = at.x - s_absolute.x;
+        dy = at.y - s_absolute.y;
+        s_absolute = at;
+        s_haveAbsolute = true;
+        if (!s_turning || !known) {
+            return;
         }
-        return;
+    } else {
+        s_haveAbsolute = false;
+        if (!s_turning) {
+            return;
+        }
+        s_restX += input.data.mouse.lLastX * s_speed;
+        s_restY += input.data.mouse.lLastY * s_speed;
+        dx = (LONG)s_restX;
+        dy = (LONG)s_restY;
+        s_restX -= dx;
+        s_restY -= dy;
     }
-    if (!s_turning) {
-        return;
-    }
-    s_restX += input.data.mouse.lLastX * s_speed;
-    s_restY += input.data.mouse.lLastY * s_speed;
-    LONG dx = (LONG)s_restX, dy = (LONG)s_restY;
-    s_restX -= dx;
-    s_restY -= dy;
     if (dx || dy) {
         s_virtual.x += dx;
         s_virtual.y += dy;
@@ -159,7 +181,7 @@ static MSG MakeMouseMove(POINT at) {
 }
 
 static BOOL WINAPI zzSetCursorPos(_In_ int X, _In_ int Y) {
-    if (s_rawInput && !s_absoluteInput && OnWindowThread() && FromGame(_ReturnAddress())) {
+    if (s_rawInput && OnWindowThread() && FromGame(_ReturnAddress())) {
         if (!s_turning && AnyButtonHeld() && (GetCapture() == s_window || s_releasedMidTurn && X == s_warp.x && Y == s_warp.y)) {
             StartTurning(X, Y);
         }
