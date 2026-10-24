@@ -1,7 +1,7 @@
 #include "mods.h"
 #include "ping.h"
 #include <winsock2.h>
-#include "detours.h"
+#include <detours/detours.h>
 
 // A ping that got no answer within this time counts as lost.
 static constexpr ULONGLONG PING_TIMEOUT_MS = 10000;
@@ -119,6 +119,7 @@ static bool AnswerArrived() {
 /// Sends the next ping request once the interval has passed. Only runs on the thread that handles incoming packets,
 /// because sending shares the connection's cipher state with that thread.
 static void PingTick() {
+    KeepOverlayHooks();
     if (!sendPingRequest || GetCurrentThreadId() != s_gameThreadId) {
         return;
     }
@@ -189,9 +190,10 @@ int GetDisplayedPing() {
     if (!IsInWorld() || s_lastPingMs < 0) {
         return -1;
     }
-    // while an answer is overdue, show how long it has been missing so that a lag spike is visible right away
+    // while an answer is overdue, show how long it has been missing so that a lag spike is visible right away; in steps of
+    // 100 ms, as each new value renders the text again
     if (s_outstanding > 0 && !AnswerArrived()) {
-        int waiting = (int)MillisSince(s_sentAt);
+        int waiting = (int)MillisSince(s_sentAt) / 100 * 100;
         if (waiting > s_lastPingMs) {
             return waiting;
         }
@@ -218,12 +220,13 @@ static SendPingRequest_t FindRequestBuilder(HMODULE game, BYTE* handler) {
             bool storesSize = q[0] == 0x66 && q[1] == 0xC7 && q[2] == 0x44 && q[3] == 0x24 && q[5] == 7 && q[6] == 0;
             bool loadsSize = q[0] >= 0xB8 && q[0] <= 0xBF && q[1] == 7 && q[2] == 0 && q[3] == 0 && q[4] == 0;
             if (storesSize || loadsSize) {
-                // 5.x passes the object that holds the request state: lea rcx, [owner]
+                // 3.9 and 5.x pass the object that holds the request state: lea rcx, [owner]
                 if (p[-7] == 0x48 && p[-6] == 0x8D && p[-5] == 0x0D) {
                     s_pingOwner = ResolveRip(p - 4, p);
-                    // cmp [rcx+count], edx; the send time sits right before the count
-                    for (BYTE* r = target; r < target + 0x20; r++) {
-                        if (r[0] == 0x39 && r[1] == 0x91) {
+                    // the count is compared first, cmp [rcx+count], edx in 5.x or cmp dword ptr [rcx+count], 0 in 3.9; the send
+                    // time sits right before it
+                    for (BYTE* r = target; r < target + 0x40; r++) {
+                        if ((r[0] == 0x39 && (r[1] & 0xC7) == 0x81) || (r[0] == 0x83 && r[1] == 0xB9)) {
                             s_pingStateOffset = *(INT32*)(r + 2) - 4;
                             break;
                         }
@@ -246,7 +249,8 @@ void InstallPing(HMODULE game) {
     real_DispatchPacket = dispatchCall ? (DispatchPacket_t)FunctionStart(dispatchCall) : nullptr;
     ModsLog("ping: response=%p request=%p owner=%p+%d dispatch=%p", real_OnPingResponse, sendPingRequest, s_pingOwner, s_pingStateOffset,
         real_DispatchPacket);
-    if (!real_OnPingResponse || !sendPingRequest || !real_DispatchPacket || !g_gameState) {
+    // a builder that takes the owner writes its state into it, so it cannot be called without knowing where that state is
+    if (!real_OnPingResponse || !sendPingRequest || !real_DispatchPacket || !g_gameState || (s_pingOwner && s_pingStateOffset < 0)) {
         sendPingRequest = nullptr;
         return;
     }

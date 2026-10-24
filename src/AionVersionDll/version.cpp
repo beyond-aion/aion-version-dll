@@ -1,6 +1,8 @@
 #include "exports.h"
+#include "module_load.h"
+#include "mods_log.h"
 #include <stdio.h>
-#include "detours.h"
+#include <detours/detours.h>
 #if defined(_M_AMD64)
 #include "mods.h"
 #endif
@@ -51,6 +53,21 @@ void InstallIpFix();
 void InstallXigncodeFix();
 void InstallShaderFix();
 void Install64BitStackFix();
+void InstallFullscreenFix();
+void InstallChatLogFix();
+#if defined(_M_AMD64)
+void InstallCrashLog();
+void InstallReserveFix();
+void InstallColorTagFix(HMODULE game);
+void InstallServerCheckFix(HMODULE game);
+void InstallLightRectFixOnLoad();
+
+/// The fixes of Game.dll, once its entry point has run.
+static void InstallGameFixes(HMODULE game) {
+    InstallColorTagFix(game);
+    InstallServerCheckFix(game);
+}
+#endif
 
 static decltype(SetWindowLongA)* real_SetWindowLongA = SetWindowLongA;
 static LONG WINAPI zzSetWindowLongA(_In_ HWND hWnd, _In_ int nIndex, _In_ LONG dwNewLong) {
@@ -82,7 +99,10 @@ static void FixClientStartupWithHighCoreCountCpus() {
     }
 }
 
+/// mods.log opens first, so that every fix and mod below can log. Of the handlers for the same DLL and phase (module_load.h), the
+/// ones of the fixes run before those of the mods.
 static void InstallPatch(HINSTANCE self) {
+    OpenModsLog(self);
     PreloadDXVK();
 
     DetourTransactionBegin();
@@ -91,9 +111,15 @@ static void InstallPatch(HINSTANCE self) {
     InstallXigncodeFix();
     InstallGraphicsOptionsFixAndCameraFix();
     InstallShaderFix();
+    InstallFullscreenFix();
+    InstallChatLogFix();
 #if defined(_M_AMD64)
     Install64BitStackFix();
-    InstallMods(self);
+    InstallCrashLog();
+    InstallReserveFix();
+    InstallLightRectFixOnLoad();
+    OnModuleLoad(L"Game.dll", InstallGameFixes, true);
+    InstallMods();
 #endif
     DetourTransactionCommit();
 

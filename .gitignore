@@ -8,4 +8,5 @@ src/AionVersionDll/Debug
 src/AionVersionDll/Release
 src/AionVersionDll/x64
 packages/
+vcpkg_installed/
 !packages/repositories.config
