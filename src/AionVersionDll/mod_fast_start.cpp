@@ -1417,9 +1417,57 @@ static void HookQuestTokens(HMODULE game) {
     ModsLog("fast start: quest tokens at %p, %d of them", p, (int)(end - tokens));
 }
 
+// 5.x clients turn every name in the XML of a table into its number with XML_GetToken, which compares it with one of some 4500 tokens
+// after another: a quarter of rebuilding the tables. The number of a name is found by a hash; a name the hash does not find goes to
+// the function, which reports it.
+typedef int(__fastcall* XmlToken_t)(const wchar_t* name);
+static XmlToken_t real_XmlToken = nullptr;
+static const wchar_t* const* s_xmlTokens;
+static std::unordered_map<DWORD, int> s_xmlTokenIndex;
+
+static int __fastcall zzXmlToken(const wchar_t* name) {
+    DWORD hash;
+    if (!name || !FoldedHash(name, hash)) {
+        return real_XmlToken(name);
+    }
+    auto found = s_xmlTokenIndex.find(hash);
+    return found != s_xmlTokenIndex.end() && EqualFolded(name, s_xmlTokens[found->second]) ? found->second : real_XmlToken(name);
+}
+
+/// push rsi; sub rsp, 20h; mov rsi, rcx; test rcx, rcx; jnz ...; ...; lea rbx, <tokens>; lea rbp, <end>; loop: mov rdx, [rbx];
+/// mov rcx, rsi; call [_wcsicmp]; ...; the report of an unknown token is the only use of its text
+static void HookXmlTokens(HMODULE game) {
+    static const wchar_t TEXT[] = L"%s, XML_GetToken() : undefined token \"%s\"";
+    const void* text = FindBytes(game, TEXT, sizeof(TEXT));
+    BYTE* lea = text ? FindLeaTo(game, text) : nullptr;
+    BYTE* p = lea ? FunctionStart(lea) : nullptr;
+    if (!p || memcmp(p, "\x40\x56\x48\x83\xEC\x20\x48\x8B\xF1\x48\x85\xC9", 12) != 0 || memcmp(p + 0x2A, "\x48\x8D\x1D", 3) != 0
+        || memcmp(p + 0x31, "\x48\x8D\x2D", 3) != 0) {
+        ModsLog("fast start: XML tokens not in this client, only 5.x has them");
+        return;
+    }
+    const wchar_t* const* tokens = (const wchar_t* const*)ResolveRip(p + 0x2D, p + 0x31);
+    const wchar_t* const* end = (const wchar_t* const*)ResolveRip(p + 0x34, p + 0x38);
+    for (const wchar_t* const* token = tokens; token < end; token++) {
+        DWORD hash;
+        if (!*token || !FoldedHash(*token, hash)) {
+            ModsLog("fast start: XML token %d not in ASCII", (int)(token - tokens));
+            s_xmlTokenIndex.clear();
+            return;
+        }
+        // the first of equal names, as the loop finds it
+        s_xmlTokenIndex.emplace(hash, (int)(token - tokens));
+    }
+    s_xmlTokens = tokens;
+    real_XmlToken = (XmlToken_t)p;
+    DetourAttach(&(PVOID&)real_XmlToken, zzXmlToken);
+    ModsLog("fast start: XML tokens at %p, %d of them", p, (int)(end - tokens));
+}
+
 void InstallFastLoad(HMODULE game) {
     HookFieldLookup(game);
     HookQuestTokens(game);
+    HookXmlTokens(game);
     HookHeapReport(game);
     HookMapLowerBound(game);
 }
