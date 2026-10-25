@@ -61,7 +61,6 @@ void InstallReserveFix();
 void InstallColorTagFix(HMODULE game);
 void InstallServerCheckFix(HMODULE game);
 void InstallLightRectFixOnLoad();
-void InstallSystemCfgFixOnLoad();
 
 /// The fixes of Game.dll, once its entry point has run.
 static void InstallGameFixes(HMODULE game) {
@@ -100,7 +99,7 @@ static void FixClientStartupWithHighCoreCountCpus() {
     }
 }
 
-/// mods.log opens first, so that every fix and mod below can log. Of the handlers for the same DLL and phase (module_load.h), the
+/// version.log opens first, so that every fix and mod below can log. Of the handlers for the same DLL and phase (module_load.h), the
 /// ones of the fixes run before those of the mods.
 static void InstallPatch(HINSTANCE self) {
     OpenModsLog(self);
@@ -119,7 +118,6 @@ static void InstallPatch(HINSTANCE self) {
     InstallCrashLog();
     InstallReserveFix();
     InstallLightRectFixOnLoad();
-    InstallSystemCfgFixOnLoad();
     OnModuleLoad(L"Game.dll", InstallGameFixes, true);
     InstallMods();
 #endif

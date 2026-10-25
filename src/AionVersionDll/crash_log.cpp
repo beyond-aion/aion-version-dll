@@ -3,7 +3,7 @@
 #include <detours/detours.h>
 
 // The client writes its own crash report next to aion.bin, which fails where the game folder is not writable (Program Files). So the crash
-// goes to mods.log first: the faulting address and the frames as module+offset, the registers and the code addresses on the stack.
+// goes to version.log first: the faulting address and the frames as module+offset, the registers and the code addresses on the stack.
 // The client's own filter runs after that as before.
 
 typedef decltype(SetUnhandledExceptionFilter)* SetUnhandledExceptionFilter_t;

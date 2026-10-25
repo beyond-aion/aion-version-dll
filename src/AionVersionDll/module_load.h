@@ -5,7 +5,7 @@
 
 typedef void (*Log_t)(const char* format, ...);
 
-/// Where the module watch and the fixes using it report, nullptr for nowhere. The mods point it at mods.log.
+/// Where the module watch and the fixes using it report, nullptr for nowhere. The fixes point it at version.log.
 extern Log_t g_moduleLog;
 
 #define MODULE_LOG(...) (g_moduleLog ? g_moduleLog(__VA_ARGS__) : (void)0)

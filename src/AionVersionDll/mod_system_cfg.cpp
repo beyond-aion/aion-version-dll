@@ -1,6 +1,5 @@
-#include "code_patch.h"
+#include "mods.h"
 #include "module_load.h"
-#include "mods_log.h"
 #include <stdio.h>
 #include <string>
 #include <vector>
@@ -117,7 +116,7 @@ static __int64 __fastcall zzSaveConfig(void* system, void* a2, void* a3, void* a
 
 /// The loader logs "Loading system configuration" and reads a file line by line, inverting each line when told to (system.cfg only).
 /// The saver starts system.cfg with two comment lines, the second of them the attention line, and inverts the settings after them.
-static void InstallSystemCfgFix(HMODULE crySystem) {
+static void InstallOnCrySystem(HMODULE crySystem) {
     // the client loads CrySystem.dll once more when it closes
     if (real_LoadConfig) {
         return;
@@ -144,6 +143,6 @@ static void InstallSystemCfgFix(HMODULE crySystem) {
     }
 }
 
-void InstallSystemCfgFixOnLoad() {
-    OnModuleLoad(L"CrySystem.dll", InstallSystemCfgFix, true);
+void InstallPlainSystemCfg() {
+    OnModuleLoad(L"CrySystem.dll", InstallOnCrySystem, true);
 }

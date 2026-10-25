@@ -28,6 +28,7 @@ struct ModsConfig {
     int largeGlyphFrom; // pixel height
     int fastStart; // FAST_START_*
     bool mimalloc;
+    bool plainSystemCfg;
 };
 
 enum { FAST_START_OFF, FAST_START_SHOW_LOGO, FAST_START_FULL };
@@ -82,6 +83,8 @@ void InstallFastLoad(HMODULE game);
 void InstallMimalloc();
 void InstallGlyphCells(HMODULE cryFont);
 void InstallOverlay();
+/// Reads and saves system.cfg in plain text.
+void InstallPlainSystemCfg();
 /// Hooks the device methods again when something else wrote over them; called once a frame.
 void KeepOverlayHooks();
 

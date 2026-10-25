@@ -69,15 +69,15 @@ void OpenModsLog(HINSTANCE self) {
     }
     swprintf_s(g_modsIniPath, L"%s\\mods.ini", dir);
     bool enabled;
-    ReadSetting({ L"General", L"Log", Setting::Bool, &enabled, 0 });
+    ReadSetting({ L"General", L"Log", Setting::Bool, &enabled, 1 });
     if (enabled) {
         wchar_t logPath[MAX_PATH];
-        swprintf_s(logPath, L"%s\\mods.log", dir);
-        s_log = _wfsopen(logPath, L"w", _SH_DENYNO);
+        swprintf_s(logPath, L"%s\\version.log", dir);
+        s_log = _wfsopen(logPath, L"w", _SH_DENYWR);
         if (!s_log) {
             // another client from the same folder still holds the log
-            swprintf_s(logPath, L"%s\\mods_%lu.log", dir, GetCurrentProcessId());
-            s_log = _wfsopen(logPath, L"w", _SH_DENYNO);
+            swprintf_s(logPath, L"%s\\version_%lu.log", dir, GetCurrentProcessId());
+            s_log = _wfsopen(logPath, L"w", _SH_DENYWR);
         }
     }
     g_moduleLog = ModsLog;

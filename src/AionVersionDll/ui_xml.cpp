@@ -613,17 +613,14 @@ static decltype(&MultiByteToWideChar) real_MultiByteToWideChar = MultiByteToWide
 static volatile LONG s_utf8Logged = 0;
 
 /// The loader turns 8-bit text, the terminating zero included, into UTF-16 in the code page of the system, into a buffer as long as
-/// the text. Valid UTF-8 with letters beyond ASCII is turned from UTF-8 instead, which never takes more units, and its byte order
-/// mark becomes a space the loader skips.
+/// the text. Valid UTF-8, which ASCII is too, is turned from UTF-8 instead, which never takes more units, and its byte order mark
+/// becomes a space the loader skips.
 static int WINAPI zzMultiByteToWideChar(UINT codePage, DWORD flags, LPCCH text, int length, LPWSTR out, int outLength) {
     if (t_loadingPath && codePage == CP_ACP && !flags && out && length > 0) {
-        bool ascii = true;
-        for (int i = 0; i < length && ascii; i++) {
-            ascii = (BYTE)text[i] < 0x80;
-        }
-        int units = ascii ? 0 : real_MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, length, out, outLength);
+        int units = real_MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, length, out, outLength);
         if (units > 0) {
-            if (!InterlockedExchange(&s_utf8Logged, 1)) {
+            // fewer units than bytes only for letters beyond ASCII
+            if (units < length && !InterlockedExchange(&s_utf8Logged, 1)) {
                 ModsLog("utf8 xml: %s is the first file read as UTF-8", t_loadingPath);
             }
             if (out[0] == 0xFEFF) {

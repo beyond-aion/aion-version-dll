@@ -53,6 +53,7 @@ static const Setting SETTINGS[] = {
     { L"Performance", L"Mimalloc", Setting::Bool, &g_modsConfig.mimalloc, 0 },
     { L"UiScale", L"Fit", Setting::Bool, &g_modsConfig.uiScaleFit, 0 },
     { L"UiScale", L"LargeGlyphFrom", Setting::Int, &g_modsConfig.largeGlyphFrom, 33, 8, 64 },
+    { L"SystemCfg", L"PlainText", Setting::Bool, &g_modsConfig.plainSystemCfg, 0 },
 };
 
 static void LoadConfig() {
@@ -141,5 +142,8 @@ void InstallMods() {
     }
     if (g_modsConfig.pingOverlayMode) {
         InstallOverlay();
+    }
+    if (g_modsConfig.plainSystemCfg) {
+        InstallPlainSystemCfg();
     }
 }

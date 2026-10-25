@@ -40,7 +40,6 @@ The DLL automatically applies fixes for the following problems:
 <summary><b>Text files</b></summary>
 
 - XML and HTML files of the game data in UTF-8 no longer show garbled letters on 64-bit clients
-- `system.cfg` can be edited in plain text on 64-bit clients, and stays in plain text when the client saves it
 </details>
 
 <details>
@@ -72,8 +71,9 @@ Optional additions to the game client, which can be enabled via `mods.ini`:
 - **Skip agreement:** skips the user agreement on login.
 - **Faster loading:** different settings to speed up client start and exit times.
 - **UI scale (5.x):** different settings to resolve UI scaling issues at high resolutions.
+- **Plain system.cfg:** reads and saves `system.cfg` in plain text, so it can be edited. A client without the mod ignores the settings of such a file and starts with its defaults.
 
-The mods find their places in the client by content rather than by fixed addresses, so they work with different client versions (3.9, 4.6, 4.8 and 5.8 have been verified). A mod that finds nothing to change simply stays off, which `mods.log` next to `version.dll` shows, together with any problems in `mods.ini`. When the client crashes, `mods.log` also gets the crash: where it happened, the registers and the calls that led there.
+The mods find their places in the client by content rather than by fixed addresses, so they work with different client versions (3.9, 4.6, 4.8 and 5.8 have been verified). A fix or mod that finds nothing to change simply stays off, which `version.log` next to `version.dll` shows, together with any problems in `mods.ini`. When the client crashes, `version.log` also gets the crash: where it happened, the registers and the calls that led there.
 
 ## Building
 This project depends on [MS Detours](https://github.com/Microsoft/Detours), [libdeflate](https://github.com/ebiggers/libdeflate) and [mimalloc](https://github.com/microsoft/mimalloc), which [vcpkg](https://vcpkg.io) fetches and builds as static libraries on the first build, as listed in `vcpkg.json`. Visual Studio 2026 includes vcpkg, so the project builds straight away; another vcpkg is used when `VCPKG_ROOT` points to it. The 64-bit build copies `mods.ini` next to `version.dll`.

@@ -47,7 +47,7 @@ struct TextTexture {
 
 static TextTexture s_pingText;
 
-// Steps of drawing that already logged a failure, so that a failing frame does not flood mods.log.
+// Steps of drawing that already logged a failure, so that a failing frame does not flood version.log.
 static DWORD s_loggedFailures = 0;
 
 static bool Failed(HRESULT result, int step, const char* what) {
