@@ -12,7 +12,7 @@ struct ModsConfig {
     int chatTimeFormat;
     bool antiAfk;
     bool noSessionTimeout;
-    bool ping;
+    int pingOverlayMode;
     int pingInterval;
     int pingX;
     int pingY;

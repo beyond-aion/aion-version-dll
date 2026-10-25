@@ -30,6 +30,8 @@ static LARGE_INTEGER s_frequency;
 
 static volatile LONG s_lastPingMs = -1;
 
+static volatile bool s_pingOverlayToggled = false;
+static volatile int s_pingResponseCount = 0;
 // The client reads the game connection on its own thread, while the answer is handled on the game thread once per frame.
 // The time an answer of the ping's length arrived is taken from the reading thread, so that the frame rate does not count.
 static volatile bool s_sendingPing = false;
@@ -41,6 +43,11 @@ static BYTE s_header[2];
 static int s_headerBytes = 0;
 static int s_packetLength = 0;
 static int s_bodyLeft = 0;
+
+bool IsPingOverlayVisible() {
+    // Always visible when configured; otherwise controlled by the /ping toggle.
+    return IsInWorld() && (g_modsConfig.pingOverlayMode == 2 || s_pingOverlayToggled);
+}
 
 static double MillisBetween(LONGLONG start, LONGLONG end) {
     return (end - start) * 1000.0 / s_frequency.QuadPart;
@@ -123,7 +130,7 @@ static void PingTick() {
     if (!sendPingRequest || GetCurrentThreadId() != s_gameThreadId) {
         return;
     }
-    if (!IsInWorld()) {
+    if (!IsPingOverlayVisible()) {
         s_lastPingMs = -1;
         return;
     }
@@ -159,6 +166,9 @@ static void __fastcall zzOnPingResponse(void* router, unsigned char serverType) 
             s_lost--;
         } else {
             // an answer to the player's own /ping command
+            if (s_pingResponseCount++ % 5 == 0) { // toggle once per 5 responses, as the client sends 5 packets
+                s_pingOverlayToggled = !s_pingOverlayToggled;
+            }
             real_OnPingResponse(router, serverType);
         }
         return;

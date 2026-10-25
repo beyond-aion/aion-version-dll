@@ -35,7 +35,7 @@ static const Setting SETTINGS[] = {
     { L"ChatTime", L"Format", Setting::Int, &g_modsConfig.chatTimeFormat, 0, 0, 2 },
     { L"AntiAfk", L"Enabled", Setting::Bool, &g_modsConfig.antiAfk, 0 },
     { L"AntiAfk", L"NoSessionTimeout", Setting::Bool, &g_modsConfig.noSessionTimeout, 0 },
-    { L"Ping", L"Enabled", Setting::Bool, &g_modsConfig.ping, 0 },
+    { L"Ping", L"OverlayMode", Setting::Int, &g_modsConfig.pingOverlayMode, 0, 0, 2 },
     { L"Ping", L"Interval", Setting::Int, &g_modsConfig.pingInterval, 3000, 500, 60000 },
     // the start of the base line, one line below the frame rate of the DXVK HUD
     { L"Ping", L"X", Setting::Int, &g_modsConfig.pingX, 8, 0, 16384 },
@@ -86,7 +86,7 @@ static void InstallGameMods(HMODULE game) {
         InstallChatTime(game);
     }
     InstallTimeouts(game);
-    if (g_modsConfig.ping) {
+    if (g_modsConfig.pingOverlayMode) {
         InstallPing(game);
     }
     if (g_modsConfig.macroLimit) {
@@ -130,7 +130,7 @@ static void InstallGameMods(HMODULE game) {
 void InstallMods() {
     LoadConfig();
     ModsLog("mods: chatTimeFormat=%d antiAfk=%d noSessionTimeout=%d ping=%d macroLimit=%d stats=%d", g_modsConfig.chatTimeFormat, g_modsConfig.antiAfk,
-        g_modsConfig.noSessionTimeout, g_modsConfig.ping, g_modsConfig.macroLimit, g_modsConfig.statPrecision);
+        g_modsConfig.noSessionTimeout, g_modsConfig.pingOverlayMode, g_modsConfig.macroLimit, g_modsConfig.statPrecision);
     OnModuleLoad(L"Game.dll", InstallGameMods, true);
     OnModuleLoad(L"CryFont.dll", InstallGlyphCells, false);
     if (g_modsConfig.fastStart != FAST_START_OFF) {
@@ -139,7 +139,7 @@ void InstallMods() {
     if (g_modsConfig.mimalloc) {
         InstallMimalloc();
     }
-    if (g_modsConfig.ping) {
+    if (g_modsConfig.pingOverlayMode) {
         InstallOverlay();
     }
 }

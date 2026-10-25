@@ -318,7 +318,7 @@ static D3DCOLOR PingColor(int ms) {
 }
 
 static void DrawOverlay(IDirect3DDevice9* device) {
-    if (!IsInWorld()) {
+    if (!IsPingOverlayVisible()) {
         s_textVisible = false;
         return;
     }
