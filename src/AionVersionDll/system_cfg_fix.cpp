@@ -1,0 +1,149 @@
+#include "code_patch.h"
+#include "module_load.h"
+#include "mods_log.h"
+#include <stdio.h>
+#include <string>
+#include <vector>
+#include <detours/detours.h>
+
+// The client keeps system.cfg in the game root with every byte of a line inverted, apart from the comment lines (--) and the line
+// breaks, and writes the whole file anew whenever it saves the settings.
+
+static const char FILE_NAME[] = "system.cfg";
+
+typedef __int64(__fastcall* LoadConfig_t)(void* system, void* path, __int64 inverted, __int64 a4, __int64 a5);
+typedef __int64(__fastcall* SaveConfig_t)(void* system, void* a2, void* a3, void* a4);
+static LoadConfig_t real_LoadConfig = nullptr;
+static SaveConfig_t real_SaveConfig = nullptr;
+// whether the file was read as plain text, so that it is saved as such
+static bool s_plainText = false;
+
+/// A line of settings in plain text has its = sign, an inverted one the inverted sign.
+static bool IsInverted(const std::string& line) {
+    return line.compare(0, 2, "--") != 0 && line.find('=') == std::string::npos && line.find((char)~'=') != std::string::npos;
+}
+
+static bool IsPlainSetting(const std::string& line) {
+    return line.compare(0, 2, "--") != 0 && line.find('=') != std::string::npos;
+}
+
+/// The lines without their line breaks; the last one is empty when the file ends with a line break.
+static bool ReadLines(std::vector<std::string>& lines) {
+    FILE* file = nullptr;
+    if (fopen_s(&file, FILE_NAME, "rb") || !file) {
+        return false;
+    }
+    std::string text;
+    char buffer[4096];
+    for (size_t read; (read = fread(buffer, 1, sizeof(buffer), file)) > 0;) {
+        text.append(buffer, read);
+    }
+    fclose(file);
+    for (size_t start = 0;;) {
+        size_t end = text.find('\n', start);
+        std::string line = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        lines.push_back(line);
+        if (end == std::string::npos) {
+            return true;
+        }
+        start = end + 1;
+    }
+}
+
+/// Turns the inverted lines into plain text and writes the file again if there were any. false if it could not be written, which
+/// a read-only file prevents.
+static bool WritePlainText(std::vector<std::string>& lines, int& inverted) {
+    inverted = 0;
+    for (std::string& line : lines) {
+        if (IsInverted(line)) {
+            for (char& c : line) {
+                c = ~c;
+            }
+            inverted++;
+        }
+    }
+    if (!inverted) {
+        return true;
+    }
+    FILE* file = nullptr;
+    if (fopen_s(&file, FILE_NAME, "wb") || !file) {
+        return false;
+    }
+    for (size_t i = 0; i < lines.size(); i++) {
+        fputs(lines[i].c_str(), file);
+        if (i + 1 < lines.size()) {
+            fputs("\r\n", file);
+        }
+    }
+    fclose(file);
+    return true;
+}
+
+/// A file with settings in plain text is read as such; inverted lines among them are turned into plain text first, so that none of
+/// them is lost. A read-only file keeps them, so it is read as what most of its lines are.
+static __int64 __fastcall zzLoadConfig(void* system, void* path, __int64 inverted, __int64 a4, __int64 a5) {
+    std::vector<std::string> lines;
+    if ((BYTE)inverted && ReadLines(lines)) {
+        int plain = 0;
+        for (const std::string& line : lines) {
+            plain += IsPlainSetting(line);
+        }
+        int converted = 0;
+        bool written = plain && WritePlainText(lines, converted);
+        if (plain && (written || plain > converted)) {
+            s_plainText = true;
+            inverted = 0;
+        }
+        if (plain) {
+            ModsLog("system cfg: %d settings in plain text, %d inverted ones %s", plain, converted,
+                written ? "turned into plain text" : s_plainText ? "left out, as the file is read-only" : "read, as the file is read-only");
+        }
+    }
+    return real_LoadConfig(system, path, inverted, a4, a5);
+}
+
+static __int64 __fastcall zzSaveConfig(void* system, void* a2, void* a3, void* a4) {
+    __int64 result = real_SaveConfig(system, a2, a3, a4);
+    std::vector<std::string> lines;
+    int inverted = 0;
+    if (s_plainText && ReadLines(lines)) {
+        WritePlainText(lines, inverted);
+    }
+    return result;
+}
+
+/// The loader logs "Loading system configuration" and reads a file line by line, inverting each line when told to (system.cfg only).
+/// The saver starts system.cfg with two comment lines, the second of them the attention line, and inverts the settings after them.
+static void InstallSystemCfgFix(HMODULE crySystem) {
+    // the client loads CrySystem.dll once more when it closes
+    if (real_LoadConfig) {
+        return;
+    }
+    static const char LOADING[] = "Loading system configuration";
+    static const char ATTENTION[] = "-- Attention: This file is generated by the system";
+    const void* loading = FindBytes(crySystem, LOADING, sizeof(LOADING));
+    const void* attention = FindBytes(crySystem, ATTENTION, sizeof(ATTENTION) - 1);
+    BYTE* loadReference = loading ? FindLeaTo(crySystem, loading) : nullptr;
+    BYTE* saveReference = attention ? FindLeaTo(crySystem, attention) : nullptr;
+    real_LoadConfig = loadReference ? (LoadConfig_t)FunctionStart(loadReference) : nullptr;
+    real_SaveConfig = saveReference ? (SaveConfig_t)FunctionStart(saveReference) : nullptr;
+    ModsLog("system cfg: load=%p save=%p", real_LoadConfig, real_SaveConfig);
+    if (!real_LoadConfig || !real_SaveConfig) {
+        return;
+    }
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+    DetourAttach(&(PVOID&)real_LoadConfig, zzLoadConfig);
+    DetourAttach(&(PVOID&)real_SaveConfig, zzSaveConfig);
+    LONG error = DetourTransactionCommit();
+    if (error) {
+        ModsLog("system cfg: hooks failed: %ld", error);
+    }
+}
+
+void InstallSystemCfgFixOnLoad() {
+    OnModuleLoad(L"CrySystem.dll", InstallSystemCfgFix, true);
+}

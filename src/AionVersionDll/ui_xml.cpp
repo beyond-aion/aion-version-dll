@@ -466,6 +466,9 @@ static bool DecodeText(const std::vector<BYTE>& data, std::wstring& text) {
 }
 
 static bool IsEditedFile(const char* path) {
+    if (s_edits.empty()) {
+        return false;
+    }
     const char* name = FileName(path);
     for (const char* screen : SCREEN_FILES) {
         if (_stricmp(name, screen) == 0) {
@@ -606,6 +609,32 @@ static __int64 __fastcall zzParseBinaryXml(void* document, XmlBuffer* buffer) {
     return real_ParseBinaryXml(document, buffer);
 }
 
+static decltype(&MultiByteToWideChar) real_MultiByteToWideChar = MultiByteToWideChar;
+static volatile LONG s_utf8Logged = 0;
+
+/// The loader turns 8-bit text, the terminating zero included, into UTF-16 in the code page of the system, into a buffer as long as
+/// the text. Valid UTF-8 with letters beyond ASCII is turned from UTF-8 instead, which never takes more units, and its byte order
+/// mark becomes a space the loader skips.
+static int WINAPI zzMultiByteToWideChar(UINT codePage, DWORD flags, LPCCH text, int length, LPWSTR out, int outLength) {
+    if (t_loadingPath && codePage == CP_ACP && !flags && out && length > 0) {
+        bool ascii = true;
+        for (int i = 0; i < length && ascii; i++) {
+            ascii = (BYTE)text[i] < 0x80;
+        }
+        int units = ascii ? 0 : real_MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, length, out, outLength);
+        if (units > 0) {
+            if (!InterlockedExchange(&s_utf8Logged, 1)) {
+                ModsLog("utf8 xml: %s is the first file read as UTF-8", t_loadingPath);
+            }
+            if (out[0] == 0xFEFF) {
+                out[0] = L' ';
+            }
+            return units;
+        }
+    }
+    return real_MultiByteToWideChar(codePage, flags, text, length, out, outLength);
+}
+
 void AddUiXmlEdit(const wchar_t* dialogName, void (*apply)(XmlNode& dialog)) {
     s_edits.push_back({ dialogName, apply });
 }
@@ -616,9 +645,6 @@ void AddUiXmlEdit(const wchar_t* dialogName, void (*apply)(XmlNode& dialog)) {
 /// ... call [rax+allocate] (390h in 4.x, 3A8h in 5.x). Before it, the loader gets the pak system from the same object the
 /// same way (190h, 1A8h).
 bool InstallUiXml(HMODULE game) {
-    if (s_edits.empty()) {
-        return false;
-    }
     // followed by a line break in 5.x clients
     static const char CANNOT_OPEN[] = "can not open file %s";
     const void* message = FindBytes(game, CANNOT_OPEN, sizeof(CANNOT_OPEN) - 1);
@@ -677,5 +703,6 @@ bool InstallUiXml(HMODULE game) {
     real_ParseBinaryXml = (ParseBinaryXml_t)parser;
     DetourAttach(&(PVOID&)real_LoadXmlFile, zzLoadXmlFile);
     DetourAttach(&(PVOID&)real_ParseBinaryXml, zzParseBinaryXml);
-    return true;
+    DetourAttach(&(PVOID&)real_MultiByteToWideChar, zzMultiByteToWideChar);
+    return !s_edits.empty();
 }

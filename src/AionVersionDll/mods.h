@@ -49,7 +49,7 @@ void InstallPing(HMODULE game);
 void InstallMacroLimit(HMODULE game);
 void InstallBuffLimit(HMODULE game);
 void InstallBuffSlots(HMODULE game, bool uiXml);
-/// Returns whether the edits can be applied.
+/// Also reads the text files that are valid UTF-8 as UTF-8. Returns whether the edits can be applied.
 bool InstallUiXml(HMODULE game);
 
 /// A node of a UI XML file as the client's binary format stores it.

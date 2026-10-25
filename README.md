@@ -37,6 +37,13 @@ The DLL automatically applies fixes for the following problems:
 </details>
 
 <details>
+<summary><b>Text files</b></summary>
+
+- XML and HTML files of the game data in UTF-8 no longer show garbled letters on 64-bit clients
+- `system.cfg` can be edited in plain text on 64-bit clients, and stays in plain text when the client saves it
+</details>
+
+<details>
 <summary><b>PrintScreen</b></summary>
 
 - the `Print Screen` key no longer opens the Snipping Tool over the game's own screenshot
