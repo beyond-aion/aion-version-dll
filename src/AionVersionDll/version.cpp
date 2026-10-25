@@ -121,7 +121,8 @@ static void InstallPatch(HINSTANCE self) {
     OnModuleLoad(L"Game.dll", InstallGameFixes, true);
     InstallMods();
 #endif
-    DetourTransactionCommit();
+    LONG error = DetourTransactionCommit();
+    ModsLog("fixes committed: %ld", error);
 
     FixClientStartupWithHighCoreCountCpus();
 }

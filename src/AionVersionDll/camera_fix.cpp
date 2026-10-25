@@ -3,6 +3,7 @@
 #include <intrin.h>
 #include <psapi.h>
 #include <detours/detours.h>
+#include "module_load.h"
 
 #pragma warning(disable: 28159)
 
@@ -343,13 +344,15 @@ void InstallOrUpdateCameraFix(HWND hWnd) {
         DetourAttach(&(PVOID&)real_ReleaseCapture, zzReleaseCapture);
         DetourAttach(&(PVOID&)real_GetAsyncKeyState, zzGetAsyncKeyState);
         DetourAttach(&(PVOID&)real_GetKeyboardState, zzGetKeyboardState);
-        DetourTransactionCommit();
+        LONG error = DetourTransactionCommit();
+        MODULE_LOG("camera fix: hooks %s (%ld)", error ? "failed" : "installed", error);
     }
     if (hWnd == s_window || !IsClientWindow(hWnd)) {
         return;
     }
     RAWINPUTDEVICE mouse = { 0x01, 0x02, 0, hWnd }; // generic desktop, mouse
     s_rawInput = RegisterRawInputDevices(&mouse, 1, sizeof(mouse)) != FALSE;
+    MODULE_LOG("camera fix: window %p, raw input %s (error %lu)", hWnd, s_rawInput ? "on" : "off", s_rawInput ? 0 : GetLastError());
     s_windowThread = GetWindowThreadProcessId(hWnd, nullptr);
     s_window = hWnd;
 }

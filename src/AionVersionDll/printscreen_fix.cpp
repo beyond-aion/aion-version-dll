@@ -1,4 +1,4 @@
-#include <windows.h>
+#include "module_load.h"
 
 // With the Windows 11 setting "Use the Print screen key to open screen capture", PrintScreen opens the Snipping Tool over the client on top
 // of the client's own screenshot. Windows leaves the key alone while a program holds it as a hot key, so the client window holds it while it
@@ -15,6 +15,11 @@ void UpdatePrintScreenHotKey(HWND window, bool foreground) {
             if (RegisterHotKey(window, HOT_KEY_ID, MOD_NOREPEAT, VK_SNAPSHOT)) {
                 s_holder = window;
             } else {
+                static bool logged = false;
+                if (!logged) {
+                    logged = true;
+                    MODULE_LOG("print screen fix: another program holds the key (error %lu)", GetLastError());
+                }
                 s_refused = window;
             }
         }

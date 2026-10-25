@@ -2,6 +2,7 @@
 #include <string.h>
 #include <windows.h>
 #include <detours/detours.h>
+#include "module_load.h"
 
 static decltype(LoadLibraryW)* real_LoadLibraryW = LoadLibraryW;
 /// Skips loading the xigncode module (.xem) by returning straight into the caller's success branch, which sets eax to 1.
@@ -17,10 +18,12 @@ static HMODULE WINAPI zzLoadLibraryW(_In_ LPCWSTR lpLibFileName) {
         BYTE* caller = (BYTE*)_ReturnAddress();
         for (BYTE* p = caller; p < caller + 1000; p++) {
             if (memcmp(p, success, sizeof(success)) == 0) {
+                MODULE_LOG("xigncode fix: %ls skipped", lpLibFileName);
                 *(void**)_AddressOfReturnAddress() = p;
                 return nullptr;
             }
         }
+        MODULE_LOG("xigncode fix: no success branch after the load of %ls", lpLibFileName);
     }
     return real_LoadLibraryW(lpLibFileName);
 }
@@ -29,6 +32,7 @@ static decltype(MessageBoxW)* real_MessageBoxW = MessageBoxW;
 /// Suppresses the warning that follows: "Your PC has a high likelihood of getting hacked into or infected by viruses..."
 static int WINAPI zzMessageBoxW(_In_opt_ HWND hWnd, _In_opt_ LPCWSTR lpText, _In_opt_ LPCWSTR lpCaption, _In_ UINT uType) {
     if (lpText && wcsncmp(lpText, L"Your PC", 7) == 0) {
+        MODULE_LOG("xigncode fix: warning about the PC left out");
         return IDOK;
     }
     return real_MessageBoxW(hWnd, lpText, lpCaption, uType);

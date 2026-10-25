@@ -6,6 +6,7 @@
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
 #include <detours/detours.h>
+#include "module_load.h"
 
 static constexpr char officialIp[] = "70.5.0.18";
 static std::list<std::string> possibleConnectIps = {};
@@ -28,6 +29,7 @@ static decltype(lstrcpynA)* real_lstrcpynA = lstrcpynA;
 static LPSTR WINAPI zzlstrcpynA(_Out_writes_(iMaxLength) LPSTR lpString1, _In_ LPCSTR lpString2, _In_ int iMaxLength) {
     if (iMaxLength == 256 && contains(possibleConnectIps, lpString2)) {
         possibleConnectIps.clear();
+        MODULE_LOG("ip fix: game server %s given as the official one", lpString2);
         return real_lstrcpynA(lpString1, officialIp, iMaxLength);
     }
     return real_lstrcpynA(lpString1, lpString2, iMaxLength);
@@ -58,6 +60,7 @@ static char* __cdecl zzstrtok_s(char* str, const char* delimiter, char** context
     if (str && (contains(possibleConnectIps, str) || (*s_commandLineIp && !strcmp(str, s_commandLineIp))) && strlen(str) < sizeof(s_spoofedIp)) {
         possibleConnectIps.clear();
         strcpy_s(s_spoofedIp, str);
+        MODULE_LOG("ip fix: game server %s given as the official one", str);
         if (strlen(str) < strlen(officialIp)) {
             // too short to hold the official address, which is split from a copy of its own instead
             strcpy_s(s_officialCopy, officialIp);
@@ -94,4 +97,5 @@ void InstallIpFix() {
             DetourAttach(&(PVOID&)real_inet_addr, zzinet_addr);
         }
     }
+    MODULE_LOG("ip fix: strtok_s=%p, -ip %s", real_strtok_s, *s_commandLineIp ? s_commandLineIp : "not given");
 }
