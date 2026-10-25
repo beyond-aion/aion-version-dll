@@ -69,7 +69,7 @@ void OpenModsLog(HINSTANCE self) {
     }
     swprintf_s(g_modsIniPath, L"%s\\mods.ini", dir);
     bool enabled;
-    ReadSetting({ L"General", L"Log", Setting::Bool, &enabled, 1 });
+    ReadSetting({ L"Logging", L"Enabled", Setting::Bool, &enabled, 0 });
     if (enabled) {
         wchar_t logPath[MAX_PATH];
         swprintf_s(logPath, L"%s\\version.log", dir);

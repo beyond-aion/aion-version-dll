@@ -6,7 +6,7 @@
 /// mods.ini next to version.dll.
 extern wchar_t g_modsIniPath[MAX_PATH];
 
-/// Opens version.log next to version.dll unless [General] Log is off, for the fixes and the mods of both builds, and points the module
+/// Opens version.log next to version.dll when [Logging] Enabled is on, for the fixes and the mods of both builds, and points the module
 /// watch's log at it. Comes first in the patch, so that whatever installs after it can log, in whatever order.
 void OpenModsLog(HINSTANCE self);
 
