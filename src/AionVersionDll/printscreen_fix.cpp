@@ -2,7 +2,8 @@
 
 // With the Windows 11 setting "Use the Print screen key to open screen capture", PrintScreen opens the Snipping Tool over the client on top
 // of the client's own screenshot. Windows leaves the key alone while a program holds it as a hot key, so the client window holds it while it
-// is in the foreground, and gets the hot key as the key up it takes its screenshots on.
+// is in the foreground, and gets the hot key as the key up it takes its screenshots on. The hot key also keeps Windows from copying the screen
+// to the clipboard, so the fix copies the client area there itself.
 
 static const int HOT_KEY_ID = 0x5C01;
 static HWND s_holder;
@@ -32,13 +33,46 @@ void UpdatePrintScreenHotKey(HWND window, bool foreground) {
     }
 }
 
+static void CopyToClipboard(HWND window) {
+    RECT rect;
+    GetClientRect(window, &rect);
+    MapWindowPoints(window, nullptr, (POINT*)&rect, 2);
+    int width = rect.right - rect.left, height = rect.bottom - rect.top;
+    HDC screen = GetDC(nullptr);
+    HDC memory = CreateCompatibleDC(screen);
+    HBITMAP bitmap = CreateCompatibleBitmap(screen, width, height);
+    HGDIOBJ old = SelectObject(memory, bitmap);
+    BitBlt(memory, 0, 0, width, height, screen, rect.left, rect.top, SRCCOPY);
+    SelectObject(memory, old);
+    DeleteDC(memory);
+    ReleaseDC(nullptr, screen);
+    if (OpenClipboard(window)) {
+        EmptyClipboard();
+        if (SetClipboardData(CF_BITMAP, bitmap)) {
+            bitmap = nullptr; // the clipboard owns it now
+        }
+        CloseClipboard();
+    }
+    if (bitmap) {
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            MODULE_LOG("print screen fix: could not copy the screenshot to the clipboard (error %lu)", GetLastError());
+        }
+        DeleteObject(bitmap);
+    }
+}
+
 /// Turns the hot key into the key up the client expects and drops a real key up meanwhile, so that a press takes one screenshot. False for a
-/// message to drop.
-bool TranslatePrintScreen(MSG* msg) {
+/// message to drop. Removed is false for a message left in the queue, which comes back.
+bool TranslatePrintScreen(MSG* msg, bool removed) {
     if (!s_holder || msg->hwnd != s_holder) {
         return true;
     }
     if (msg->message == WM_HOTKEY && msg->wParam == HOT_KEY_ID) {
+        if (removed) {
+            CopyToClipboard(s_holder);
+        }
         msg->message = WM_KEYUP;
         msg->wParam = VK_SNAPSHOT;
         msg->lParam = 0xC1370001; // scan code 37h, extended, released

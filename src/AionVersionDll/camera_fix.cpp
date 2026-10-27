@@ -8,7 +8,7 @@
 #pragma warning(disable: 28159)
 
 void UpdatePrintScreenHotKey(HWND window, bool foreground);
-bool TranslatePrintScreen(MSG* msg);
+bool TranslatePrintScreen(MSG* msg, bool removed);
 
 // The client turns the camera while a mouse button is held by putting the cursor back to the screen centre after every mouse move and turning
 // by how far the next WM_MOUSEMOVE lands from it. Since the Windows 10 Fall Creators Update the move messages after SetCursorPos are often
@@ -310,7 +310,7 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
         }
         // positions of the real cursor, which stays put while turning
         bool drop = lpMsg->message == WM_MOUSEMOVE && lpMsg->hwnd == s_window
-            && (s_turning || s_releasedMidTurn && lpMsg->pt.x == s_pinned.x && lpMsg->pt.y == s_pinned.y) || !TranslatePrintScreen(lpMsg);
+            && (s_turning || s_releasedMidTurn && lpMsg->pt.x == s_pinned.x && lpMsg->pt.y == s_pinned.y) || !TranslatePrintScreen(lpMsg, wRemoveMsg & PM_REMOVE);
         if (drop) {
             if (!(wRemoveMsg & PM_REMOVE)) {
                 MSG dropped;
