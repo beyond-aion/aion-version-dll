@@ -1,6 +1,7 @@
 #include "exports.h"
 #include <winternl.h>
-#include "detours.h"
+#include <detours/detours.h>
+#include "module_load.h"
 
 /* Code from https://github.com/AbdouRoumi/Custom-GetProcAddress */
 FARPROC CustomGetProcProcess(IN HMODULE hModule, IN LPCSTR FuncName) {
@@ -195,4 +196,5 @@ void Install64BitStackFix() {
 
     /* same fix*/
     DetourAttach(&(PVOID&)real_LoadLibraryA, zzLoadLibraryA);
+    MODULE_LOG("stack fix: RtlAddVectoredExceptionHandler=%p CreateFileA=%p", real_RtlAddVectoredExceptionHandler, real_CreateFileA);
 }

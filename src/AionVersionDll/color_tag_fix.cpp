@@ -1,4 +1,5 @@
-#include "mods.h"
+#include "code_patch.h"
+#include "mods_log.h"
 
 /// Older clients (4.6) cut the text of a color tag to the length of the tag name "color:" minus one, so 5 characters; later
 /// ones take 127. The limit is set up before the copy loop as lea r9d, [r12-1] with r12 the name length (6), and turned into

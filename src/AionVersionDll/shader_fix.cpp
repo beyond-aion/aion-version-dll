@@ -4,7 +4,8 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 #pragma comment(lib, "Shlwapi.lib")
-#include "detours.h"
+#include <detours/detours.h>
+#include "module_load.h"
 
 typedef HRESULT(WINAPI* PFN_D3DXCompileShader)(LPCSTR, UINT, const void*, void*, LPCSTR, LPCSTR, DWORD, void**, void**, void**);
 static PFN_D3DXCompileShader real_D3DXCompileShader = nullptr;
@@ -16,6 +17,11 @@ static HRESULT WINAPI zzD3DXCompileShader(LPCSTR pSrcData, UINT SrcDataLen, cons
     const char* end = pSrcData + SrcDataLen;
     auto it = std::search(begin, end, std::begin(target), std::end(target) - 1);
     if (it != end) {
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            MODULE_LOG("shader fix: first shader fixed (%s)", pFunctionName ? pFunctionName : "");
+        }
         size_t pos = it - begin;
         std::string modified(pSrcData, SrcDataLen);
         modified.insert(pos + 1, insertFix);
@@ -52,7 +58,8 @@ static void DeleteFiles(const std::string& folder, const std::string& pattern) {
     FindClose(hFind);
 }
 
-static void SetupShaderCache() {
+/// Whether the cached shaders were deleted.
+static bool SetupShaderCache() {
     std::string cacheDir = getGameRootDir() + "\\Shaders\\Cache";
     // the game client deletes all cached shader files on startup if it crashed or closed improperly.
     // we name the marker file so that it also gets deleted on such recompilation events.
@@ -70,14 +77,18 @@ static void SetupShaderCache() {
             CloseHandle(hFile);
         }
     }
+    return markerFileMissing;
 }
 
 /// Fixes black flickering when using the High Quality graphics engine with Nvidia drivers from 2016 or later, as well as rendering issues with AMD's Vulkan driver for Windows
 void InstallShaderFix() {
     HMODULE hD3dx9 = LoadLibrary(L"d3dx9_38.dll");
     if (hD3dx9) {
-        SetupShaderCache();
+        bool cleared = SetupShaderCache();
         real_D3DXCompileShader = (PFN_D3DXCompileShader)GetProcAddress(hD3dx9, "D3DXCompileShader");
         DetourAttach(&(PVOID&)real_D3DXCompileShader, zzD3DXCompileShader);
+        MODULE_LOG("shader fix: D3DXCompileShader=%p, shader cache %s", real_D3DXCompileShader, cleared ? "cleared" : "kept");
+    } else {
+        MODULE_LOG("shader fix: d3dx9_38.dll not found (error %lu)", GetLastError());
     }
 }
