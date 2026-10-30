@@ -24,6 +24,7 @@ struct ModsConfig {
     bool questTargets;
     bool multiClient;
     bool skipAgreement;
+    bool skipTypedConfirm;
     bool uiScaleFit;
     int largeGlyphFrom; // pixel height
     int fastStart; // FAST_START_*
@@ -75,6 +76,8 @@ void InstallQuestTargets(HMODULE game);
 void InstallUiScale(HMODULE game);
 void InstallMultiClient(HMODULE game);
 void InstallSkipAgreement(HMODULE game);
+/// Shows the usual yes-or-no question instead of the ones that ask to type a word.
+void InstallQuickDestroy(HMODULE game);
 /// The start-up shortcuts outside Game.dll; must be called inside an open Detours transaction.
 void InstallFastStart();
 void InstallSkipLogo(HMODULE game);

@@ -69,6 +69,7 @@ Optional additions to the game client, which can be enabled via `mods.ini`:
 - **Quest targets:** displays quest icons in front of the names of monsters that a quest step needs, as 5.x clients already do. On 4.6, gatherable objects also get the green glow later clients show.
 - **Multi client:** allows running more than two clients simultaneously.
 - **Skip agreement:** skips the user agreement on login.
+- **Quick destroy:** asks the usual yes-or-no question for the items that otherwise want a word typed before them.
 - **Faster loading:** different settings to speed up client start and exit times.
 - **UI scale (5.x):** different settings to resolve UI scaling issues at high resolutions.
 - **Plain system.cfg:** reads and saves `system.cfg` in plain text, so it can be edited. A client without the mod ignores the settings of such a file and starts with its defaults.
