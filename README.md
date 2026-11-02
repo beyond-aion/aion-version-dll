@@ -39,7 +39,7 @@ The DLL automatically applies fixes for the following problems:
 <details>
 <summary><b>Pet decoration</b></summary>
 
-- the decoration chosen when adopting a pet (one of the scarves) now shows on the pet summoned into the world in 4.8, where the client checked `customize_color` instead of `customize_attach`; 4.6, 5.8 and 3.9 already check the right setting
+- 4.8 64-bit clients now show the decoration that was chosen when adopting the pet
 </details>
 
 <details>
