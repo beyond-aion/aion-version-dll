@@ -30,6 +30,7 @@ struct ModsConfig {
     int fastStart; // FAST_START_*
     bool mimalloc;
     bool plainSystemCfg;
+    bool petDecoration;
 };
 
 enum { FAST_START_OFF, FAST_START_SHOW_LOGO, FAST_START_FULL };
@@ -78,6 +79,8 @@ void InstallMultiClient(HMODULE game);
 void InstallSkipAgreement(HMODULE game);
 /// Shows the usual yes-or-no question instead of the ones that ask to type a word.
 void InstallQuickDestroy(HMODULE game);
+/// 4.8: applies the decoration chosen at adoption to the summoned pet, as the adoption preview and the pet window already show it.
+void InstallPetDecoration(HMODULE game);
 /// The start-up shortcuts outside Game.dll; must be called inside an open Detours transaction.
 void InstallFastStart();
 void InstallSkipLogo(HMODULE game);
