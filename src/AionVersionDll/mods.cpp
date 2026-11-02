@@ -50,7 +50,6 @@ static const Setting SETTINGS[] = {
     { L"MultiClient", L"Enabled", Setting::Bool, &g_modsConfig.multiClient, 0 },
     { L"Login", L"SkipAgreement", Setting::Bool, &g_modsConfig.skipAgreement, 0 },
     { L"Destroy", L"SkipTypedConfirm", Setting::Bool, &g_modsConfig.skipTypedConfirm, 0 },
-    { L"PetDecoration", L"Enabled", Setting::Bool, &g_modsConfig.petDecoration, 0 },
     { L"Performance", L"LoadingMode", Setting::Int, &g_modsConfig.fastStart, FAST_START_OFF, FAST_START_OFF, FAST_START_FULL },
     { L"Performance", L"Mimalloc", Setting::Bool, &g_modsConfig.mimalloc, 0 },
     { L"UiScale", L"Fit", Setting::Bool, &g_modsConfig.uiScaleFit, 0 },
@@ -116,9 +115,6 @@ static void InstallGameMods(HMODULE game) {
     }
     if (g_modsConfig.skipTypedConfirm) {
         InstallQuickDestroy(game);
-    }
-    if (g_modsConfig.petDecoration) {
-        InstallPetDecoration(game);
     }
     if (g_modsConfig.fastStart == FAST_START_FULL) {
         InstallSkipLogo(game);

@@ -60,12 +60,14 @@ void InstallCrashLog();
 void InstallReserveFix();
 void InstallColorTagFix(HMODULE game);
 void InstallServerCheckFix(HMODULE game);
+void InstallPetDecorationFix(HMODULE game);
 void InstallLightRectFixOnLoad();
 
 /// The fixes of Game.dll, once its entry point has run.
 static void InstallGameFixes(HMODULE game) {
     InstallColorTagFix(game);
     InstallServerCheckFix(game);
+    InstallPetDecorationFix(game);
 }
 #endif
 

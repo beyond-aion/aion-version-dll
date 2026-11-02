@@ -37,6 +37,12 @@ The DLL automatically applies fixes for the following problems:
 </details>
 
 <details>
+<summary><b>Pet decoration</b></summary>
+
+- the decoration chosen when adopting a pet (one of the scarves) now shows on the pet summoned into the world in 4.8, where the client checked `customize_color` instead of `customize_attach`; 4.6, 5.8 and 3.9 already check the right setting
+</details>
+
+<details>
 <summary><b>Text files</b></summary>
 
 - XML and HTML files of the game data in UTF-8 no longer show garbled letters on 64-bit clients
@@ -70,7 +76,6 @@ Optional additions to the game client, which can be enabled via `mods.ini`:
 - **Multi client:** allows running more than two clients simultaneously.
 - **Skip agreement:** skips the user agreement on login.
 - **Quick destroy:** asks the usual yes-or-no question for the items that otherwise want a word typed before them.
-- **Pet decoration (4.8):** shows the decoration chosen when adopting a pet (one of the scarves) on the pet summoned into the world; the 4.8 client otherwise checks a setting that no pet type has and skips it. Other clients check the right setting and are left as they are.
 - **Faster loading:** different settings to speed up client start and exit times.
 - **UI scale (5.x):** different settings to resolve UI scaling issues at high resolutions.
 - **Plain system.cfg:** reads and saves `system.cfg` in plain text, so it can be edited. A client without the mod ignores the settings of such a file and starts with its defaults.

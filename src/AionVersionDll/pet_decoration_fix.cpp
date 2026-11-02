@@ -1,9 +1,10 @@
-#include "mods.h"
+#include "code_patch.h"
+#include "mods_log.h"
 
 // The world applies the decorations sent with a pet (the three attachment ids of the appearance block) only when the pet type allows
 // them. 4.8 asks for customize_color there, which is 0 for every pet type, while the adoption preview and the pet window ask for
-// customize_attach, so a summoned pet never wears what the player picked. The mod drops that check; the ids still apply only when
-// nonzero, so a pet sent without them keeps its defaults. 4.6, 5.8 and 3.9 already ask for customize_attach, and there the mod only
+// customize_attach, so a summoned pet never wears what the player picked. The fix drops that check; the ids still apply only when
+// nonzero, so a pet sent without them keeps its defaults. 4.6, 5.8 and 3.9 already ask for customize_attach, and there the fix only
 // logs which flag the check reads.
 namespace {
 
@@ -63,7 +64,7 @@ const struct {
 
 } // namespace
 
-void InstallPetDecoration(HMODULE game) {
+void InstallPetDecorationFix(HMODULE game) {
     if (BYTE* block = FindPattern(game, PATTERN_48)) {
         static const BYTE FALL_THROUGH[2] = { 0x90, 0x90 };
         bool done = PatchMemory(block, FALL_THROUGH, sizeof(FALL_THROUGH));
