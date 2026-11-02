@@ -1,7 +1,10 @@
 #include "mods.h"
+#include "module_load.h"
 #include <map>
 #include <stdio.h>
-#include "detours.h"
+#include <unordered_map>
+#include <vector>
+#include <detours/detours.h>
 
 // First entry of the table of graphic characters for quest icons (givable, working, finished per quest kind).
 static const char FIRST_QUEST_ICON[] = "quest_givable";
@@ -17,7 +20,6 @@ static constexpr int FIRST_GATHERABLE = 700000;
 static constexpr int LAST_GATHERABLE = 729999;
 // a marker state the marker function accepts, and the slot of the name table it reads for it with quest kind 0
 static constexpr int BORROWED_STATE = 2;
-static constexpr int MARKER_STATE_OFFSET = 0x1D0;
 // The point of the quest target effect runs along a circle drawn flat. Later effect data turns it upright by 90 degrees about Y
 // in a field older clients lack, so there the point swings sideways instead of up and down.
 static const char TARGET_POINT_EFFECT[] = "sys_UIfx.Quest.point";
@@ -52,33 +54,55 @@ static SetQuestMarker_t real_SetQuestMarker = nullptr;
 static FindEffect_t s_findEffect = nullptr;
 static const char** s_markerEffects = nullptr;
 static INT32 s_effectsOffset = 0;
+// where the marker function keeps the quest, the marker state and the quest kind it was given (4.x 0x1D0, 3.9 0x1C8)
+static INT32 s_markerStateOffset = -1;
+// where an NPC keeps its id (4.x 0x34, 3.9 0x30)
+static int s_npcIdOffset = -1;
 
 extern "C" void* g_questIconResume = nullptr;
 extern "C" INT64 g_questIconLines = 0;
 extern "C" void QuestIconStubR15R12();
 extern "C" void QuestIconStubR14Rbp();
 
-/// The quest in progress whose current step needs the NPC (to kill, loot or gather), from the client's quest monster table.
-static int FindQuestNeeding(int npcId) {
-    int count = *s_questCount;
+// Id and step of each quest in progress the NPC lookup was built from, and the lookup: NPC id to the first quest needing it.
+// Names are built for every NPC on screen in every frame, so the table is only queried again when a quest changes.
+static std::vector<std::pair<int, int>> s_lookupQuests;
+static std::unordered_map<int, int> s_questByNpc;
+
+static void RefreshQuestLookup() {
+    int count = max(0, *s_questCount);
     BYTE* quests = (BYTE*)(s_questCount + 1);
+    bool unchanged = count == (int)s_lookupQuests.size();
+    for (int i = 0; unchanged && i < count; i++) {
+        unchanged = s_lookupQuests[i].first == *(int*)(quests + 16 * i) && s_lookupQuests[i].second == *(int*)(quests + 16 * i + 5);
+    }
+    if (unchanged) {
+        return;
+    }
+    s_lookupQuests.clear();
+    s_questByNpc.clear();
     BYTE* buffer[MAX_ENTRIES];
     for (int i = 0; i < count; i++) {
         int questId = *(int*)(quests + 16 * i);
         int step = *(int*)(quests + 16 * i + 5);
+        s_lookupQuests.emplace_back(questId, step);
         EntryList entries = { nullptr, buffer, buffer, buffer + MAX_ENTRIES };
         s_queryQuestMonsters(s_questMonsterTable, questId, step, &entries);
         for (BYTE** entry = entries.first; entry < entries.last; entry++) {
             int* npc = *(int**)(*entry + 32);
             int* npcEnd = *(int**)(*entry + 40);
             for (; npc && npc < npcEnd; npc++) {
-                if (*npc == npcId) {
-                    return questId;
-                }
+                s_questByNpc.emplace(*npc, questId);
             }
         }
     }
-    return 0;
+}
+
+/// The quest in progress whose current step needs the NPC (to kill, loot or gather), from the client's quest monster table.
+static int FindQuestNeeding(int npcId) {
+    RefreshQuestLookup();
+    auto found = s_questByNpc.find(npcId);
+    return found != s_questByNpc.end() ? found->second : 0;
 }
 
 /// Puts the icon of the quest kind, as the quest window shows it, in front of the name of an NPC a quest in progress needs.
@@ -86,7 +110,7 @@ extern "C" int AppendQuestIcon(BYTE* owner, wchar_t* line, int written) {
     if (!owner || written < 0 || written >= LINE_LENGTH - 8) {
         return written;
     }
-    int questId = FindQuestNeeding(*(int*)(owner + 0x34));
+    int questId = FindQuestNeeding(*(int*)(owner + s_npcIdOffset));
     if (!questId) {
         return written;
     }
@@ -113,7 +137,9 @@ static void TurnTargetPoint(void* effects) {
     const char* name = capacity >= 16 ? *(const char**)(effect + EFFECT_NAME_OFFSET) : (const char*)(effect + EFFECT_NAME_OFFSET);
     BYTE* params = effect + EFFECT_PARAMS_OFFSET;
     float* angles = (float*)(params + PARAMS_ANGLES_OFFSET);
-    bool matches = length == strlen(TARGET_POINT_EFFECT) && memcmp(name, TARGET_POINT_EFFECT, length) == 0 && *(int*)params < 0;
+    // the name is only read where the string fields look like a string of that length, in case the effect is laid out otherwise
+    bool matches = length == strlen(TARGET_POINT_EFFECT) && capacity >= length && capacity < 0x10000
+        && memcmp(name, TARGET_POINT_EFFECT, length) == 0 && *(int*)params < 0;
     bool flat = angles[0] == 0 && angles[1] == 0 && angles[2] == 0;
     if (matches && flat) {
         angles[1] = TARGET_POINT_TURN;
@@ -132,7 +158,7 @@ static bool IsMarkerState(int state) {
 /// place of the marker effect it would use for a borrowed marker state.
 static void __fastcall zzSetQuestMarker(BYTE* npc, int questId, int state, int kind) {
     real_SetQuestMarker(npc, questId, state, kind);
-    int npcId = npc ? *(int*)(npc + 0x34) : 0;
+    int npcId = npc ? *(int*)(npc + s_npcIdOffset) : 0;
     if (IsMarkerState(state) || npcId < FIRST_GATHERABLE || npcId > LAST_GATHERABLE || !FindQuestNeeding(npcId)) {
         return;
     }
@@ -150,7 +176,7 @@ static void __fastcall zzSetQuestMarker(BYTE* npc, int questId, int state, int k
     *slot = QUEST_TARGET_EFFECT;
     real_SetQuestMarker(npc, questId, BORROWED_STATE, 0);
     *slot = marker;
-    int* markerState = (int*)(npc + MARKER_STATE_OFFSET);
+    int* markerState = (int*)(npc + s_markerStateOffset);
     markerState[0] = questId;
     markerState[1] = state;
     markerState[2] = kind;
@@ -171,8 +197,14 @@ static void InstallQuestTargetEffect(HMODULE game) {
             lookup = p;
         }
     }
-    ModsLog("quest target effect: marker function=%p lookup=%p", function, lookup);
-    if (!lookup || !s_queryQuestMonsters || !s_questCount) {
+    // the marker function stores the quest it is given first: mov [rcx+state], edx
+    for (BYTE* p = function; p && p < function + 0x100 && s_markerStateOffset < 0; p++) {
+        if (p[0] == 0x89 && p[1] == 0x91) {
+            s_markerStateOffset = *(INT32*)(p + 2);
+        }
+    }
+    ModsLog("quest target effect: marker function=%p lookup=%p state=%X", function, lookup, s_markerStateOffset);
+    if (!lookup || s_markerStateOffset < 0 || s_npcIdOffset < 0 || !s_queryQuestMonsters || !s_questCount) {
         return;
     }
     s_markerEffects = (const char**)ResolveRip(lookup + 3, lookup + 7);
@@ -184,12 +216,42 @@ static void InstallQuestTargetEffect(HMODULE game) {
 
 /// The function holding an instruction that loads the given address through a RIP-relative mov or lea.
 static BYTE* FunctionLoading(HMODULE game, const void* target) {
-    for (BYTE* c = (BYTE*)game; InModule(game, c, 8); c++) {
+    BYTE* end = (BYTE*)game + ModuleImageSize(game) - 8;
+    for (BYTE* c = (BYTE*)game; c <= end; c++) {
         if ((c[0] == 0x48 || c[0] == 0x4C) && (c[1] == 0x8B || c[1] == 0x8D) && (c[2] & 0xC7) == 0x05 && ResolveRip(c + 3, c + 7) == target) {
             return FunctionStart(c);
         }
     }
     return nullptr;
+}
+
+/// The NPC id, as the client loads it before telling gatherable objects apart: mov r32, [reg+id]; ...; cmp r32, 700000. The most
+/// common offset among those loads.
+static int FindNpcIdOffset(HMODULE game) {
+    std::map<int, int> votes;
+    BYTE* start = (BYTE*)game + 0x40;
+    BYTE* end = (BYTE*)game + ModuleImageSize(game) - 8;
+    for (BYTE* c = start; c < end; c++) {
+        if (c[0] != 0x81 || (c[1] & 0xF8) != 0xF8 || *(UINT32*)(c + 2) != FIRST_GATHERABLE) {
+            continue;
+        }
+        bool extended = c[-1] == 0x41;
+        int reg = c[1] & 7;
+        for (BYTE* q = c - 3; q > c - 40 && q > start; q--) {
+            if (q[0] == 0x8B && (q[1] & 0xC0) == 0x40 && ((q[1] >> 3) & 7) == reg && (q[1] & 7) != 4 && ((q[-1] & 0x44) == 0x44) == extended) {
+                votes[q[2]]++;
+                break;
+            }
+        }
+    }
+    int best = -1, bestVotes = 0;
+    for (auto& vote : votes) {
+        if (vote.second > bestVotes) {
+            best = vote.first;
+            bestVotes = vote.second;
+        }
+    }
+    return best;
 }
 
 /// The quest list is searched in many places: movsxd r8, [count]; lea rdx, [count + 4]; mov r9d, 16 (the entry size).
@@ -225,6 +287,7 @@ void InstallQuestTargets(HMODULE game) {
         s_questMonsterTable = ResolveRip(query + 12, query + 16) - 16;
     }
     s_questCount = FindQuestCount(game);
+    s_npcIdOffset = FindNpcIdOffset(game);
     // the icon of a quest in the quest window
     s_questIconType = (QuestIconType_t)FindPattern(game,
         "48 89 4C 24 08 B8 ?? ?? 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 89 AC 24 ?? ?? 00 00 48 8D 4C 24 40 48 89 BC 24 ?? ?? 00 00 8B FA BD 01 00 00 00 E8");
@@ -250,9 +313,9 @@ void InstallQuestTargets(HMODULE game) {
         }
     }
     InstallQuestTargetEffect(game);
-    ModsLog("quest targets: query=%p table=%p count=%p type=%p icon=%p join=%p stub=%p", s_queryQuestMonsters, s_questMonsterTable,
-        s_questCount, s_questIconType, s_questIcon, join, stub);
-    if (!s_queryQuestMonsters || !s_questCount || !s_questIconType || !s_questIcon || !stub) {
+    ModsLog("quest targets: query=%p table=%p count=%p id=%X type=%p icon=%p join=%p stub=%p", s_queryQuestMonsters, s_questMonsterTable,
+        s_questCount, s_npcIdOffset, s_questIconType, s_questIcon, join, stub);
+    if (!s_queryQuestMonsters || !s_questCount || s_npcIdOffset < 0 || !s_questIconType || !s_questIcon || !stub) {
         return;
     }
     g_questIconLines = *(INT32*)(join - 9);
