@@ -47,6 +47,25 @@ static QuestIcon_t s_questIcon = nullptr;
 // quests in progress: their number, followed by 16 bytes per quest (id, state byte, step)
 static volatile int* s_questCount = nullptr;
 
+// The client asks two more things before it counts an NPC as needed, as it does for the glow over gatherable objects. A quest waits
+// for a talk when it has nothing left to collect (the items of its collecting step are all in the inventory, or it has no such step)
+// and an NPC script answers its state and step, like the NPC that takes the items: then none of its targets count. And 4.8 drops the
+// entries whose item the inventory already holds enough of; 4.6 has no such check. These functions keep their quest manager in
+// globals, as the icon type does, and ignore the pointer.
+typedef int(__fastcall* CollectionDone_t)(void* questManager, int questId);
+typedef int(__fastcall* QuestTalks_t)(int questId, int state, int step, void** scripts);
+typedef int(__fastcall* ItemCollected_t)(void* questManager, int questId, int itemId);
+
+static CollectionDone_t s_collectionDone = nullptr;
+// the NPC scripts by quest, null until loaded
+static void** s_questTalkTable = nullptr;
+static QuestTalks_t s_questTalks = nullptr;
+static ItemCollected_t s_itemCollected = nullptr;
+// the scripts the talk lookup writes, at most 32 (the client gives it 264 bytes)
+static constexpr int MAX_TALKS = 33;
+// item counts change without a quest changing, so the conditions are asked again this often
+static constexpr ULONGLONG RECHECK_MS = 250;
+
 typedef void(__fastcall* SetQuestMarker_t)(BYTE* npc, int questId, int state, int kind);
 typedef void*(__fastcall* FindEffect_t)(void* effects, const char* name);
 
@@ -64,35 +83,82 @@ extern "C" INT64 g_questIconLines = 0;
 extern "C" void QuestIconStubR15R12();
 extern "C" void QuestIconStubR14Rbp();
 
-// Id and step of each quest in progress the NPC lookup was built from, and the lookup: NPC id to the first quest needing it.
-// Names are built for every NPC on screen in every frame, so the table is only queried again when a quest changes.
-static std::vector<std::pair<int, int>> s_lookupQuests;
+/// An entry of the quest monster table for the current step of a quest: the item it drops or gives, if any, and the NPCs.
+struct TargetEntry {
+    int item;
+    std::vector<int> npcs;
+};
+
+struct LookupQuest {
+    int id;
+    BYTE state;
+    int step;
+    std::vector<TargetEntry> entries;
+};
+
+// The quests in progress the NPC lookup was built from with their table entries, which entries the conditions kept, and the lookup:
+// NPC id to the first quest needing it. Names are built for every NPC on screen in every frame, so the table is only queried again
+// when a quest changes, and the conditions are asked again when a quest changes or RECHECK_MS passed.
+static std::vector<LookupQuest> s_lookupQuests;
+static std::vector<bool> s_keptEntries;
+static ULONGLONG s_checkedAt = 0;
 static std::unordered_map<int, int> s_questByNpc;
+
+static bool WaitsForTalk(const LookupQuest& quest) {
+    if (!s_collectionDone || !s_questTalks || !*s_questTalkTable || !s_collectionDone(nullptr, quest.id)) {
+        return false;
+    }
+    void* scripts[MAX_TALKS];
+    return s_questTalks(quest.id, quest.state, quest.step, scripts) > 0;
+}
 
 static void RefreshQuestLookup() {
     int count = max(0, *s_questCount);
     BYTE* quests = (BYTE*)(s_questCount + 1);
     bool unchanged = count == (int)s_lookupQuests.size();
     for (int i = 0; unchanged && i < count; i++) {
-        unchanged = s_lookupQuests[i].first == *(int*)(quests + 16 * i) && s_lookupQuests[i].second == *(int*)(quests + 16 * i + 5);
+        BYTE* quest = quests + 16 * i;
+        unchanged = s_lookupQuests[i].id == *(int*)quest && s_lookupQuests[i].state == quest[4] && s_lookupQuests[i].step == *(int*)(quest + 5);
     }
-    if (unchanged) {
+    ULONGLONG now = GetTickCount64();
+    if (unchanged && now - s_checkedAt < RECHECK_MS) {
         return;
     }
-    s_lookupQuests.clear();
+    s_checkedAt = now;
+    if (!unchanged) {
+        s_lookupQuests.clear();
+        BYTE* buffer[MAX_ENTRIES];
+        for (int i = 0; i < count; i++) {
+            BYTE* quest = quests + 16 * i;
+            LookupQuest& added = s_lookupQuests.emplace_back(LookupQuest{ *(int*)quest, quest[4], *(int*)(quest + 5), {} });
+            EntryList entries = { nullptr, buffer, buffer, buffer + MAX_ENTRIES };
+            s_queryQuestMonsters(s_questMonsterTable, added.id, added.step, &entries);
+            for (BYTE** entry = entries.first; entry < entries.last; entry++) {
+                int* npc = *(int**)(*entry + 32);
+                int* npcEnd = *(int**)(*entry + 40);
+                added.entries.push_back({ *(int*)(*entry + 16), npc && npc < npcEnd ? std::vector<int>(npc, npcEnd) : std::vector<int>() });
+            }
+        }
+    }
+    std::vector<bool> kept;
+    for (const LookupQuest& quest : s_lookupQuests) {
+        bool open = !WaitsForTalk(quest);
+        for (const TargetEntry& entry : quest.entries) {
+            kept.push_back(open && !(entry.item > 0 && s_itemCollected && s_itemCollected(nullptr, quest.id, entry.item)));
+        }
+    }
+    if (unchanged && kept == s_keptEntries) {
+        return;
+    }
+    s_keptEntries = std::move(kept);
     s_questByNpc.clear();
-    BYTE* buffer[MAX_ENTRIES];
-    for (int i = 0; i < count; i++) {
-        int questId = *(int*)(quests + 16 * i);
-        int step = *(int*)(quests + 16 * i + 5);
-        s_lookupQuests.emplace_back(questId, step);
-        EntryList entries = { nullptr, buffer, buffer, buffer + MAX_ENTRIES };
-        s_queryQuestMonsters(s_questMonsterTable, questId, step, &entries);
-        for (BYTE** entry = entries.first; entry < entries.last; entry++) {
-            int* npc = *(int**)(*entry + 32);
-            int* npcEnd = *(int**)(*entry + 40);
-            for (; npc && npc < npcEnd; npc++) {
-                s_questByNpc.emplace(*npc, questId);
+    size_t index = 0;
+    for (const LookupQuest& quest : s_lookupQuests) {
+        for (const TargetEntry& entry : quest.entries) {
+            if (s_keptEntries[index++]) {
+                for (int npc : entry.npcs) {
+                    s_questByNpc.emplace(npc, quest.id);
+                }
             }
         }
     }
@@ -279,6 +345,51 @@ static volatile int* FindQuestCount(HMODULE game) {
     return (volatile int*)best;
 }
 
+/// The conditions a quest's targets need besides its step, as the client's quest navigation asks them: call <collection done>; test
+/// eax, eax; jz; cmp [talk table], r15; jz; lea r9, [rsp+x]; movzx edx, bpl; ...; call <talk lookup>. The talk lookup is found by
+/// itself, as it loads the same table first: sub rsp, 58h; three register saves; mov r11d, ecx; mov rcx, [table]; xor esi, esi.
+static void FindTalkConditions(HMODULE game) {
+    BYTE* site = FindPattern(game, "E8 ?? ?? ?? ?? 85 C0 0F 84 ?? ?? ?? ?? 4C 39 3D ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 4C 8D 8C 24 ?? ?? ?? ?? 40 0F B6 D5");
+    BYTE* talks = FindPattern(game, "48 83 EC 58 48 89 74 24 70 4C 89 6C 24 48 4C 89 74 24 40 44 8B D9 48 8B 0D ?? ?? ?? ?? 33 F6 4C 8B 51 08");
+    if (!site || !talks || ResolveRip(site + 16, site + 20) != ResolveRip(talks + 25, talks + 29)) {
+        return;
+    }
+    s_collectionDone = (CollectionDone_t)ResolveRip(site + 1, site + 5);
+    s_questTalkTable = (void**)ResolveRip(site + 16, site + 20);
+    s_questTalks = (QuestTalks_t)talks;
+}
+
+/// The item check, where the client skips a table entry: mov r8d, [entry+16]; test r8d, r8d; jle; ...; lea rcx, [quest manager];
+/// ...; call. The function most of those places call.
+static void FindItemCollected(HMODULE game) {
+    std::map<BYTE*, int> votes;
+    for (BYTE* p : FindAllPatterns(game, "44 8B ?? 10 45 85 C0 7E")) {
+        if ((p[2] & 0xF8) != 0x40) {
+            continue;
+        }
+        BYTE* lea = nullptr;
+        for (BYTE* q = p + 9; q < p + 25 && !lea; q++) {
+            lea = q[0] == 0x48 && q[1] == 0x8D && q[2] == 0x0D ? q : nullptr;
+        }
+        for (BYTE* q = lea ? lea + 7 : nullptr; q && q < lea + 13; q++) {
+            if (*q == 0xE8) {
+                votes[ResolveRip(q + 1, q + 5)]++;
+                break;
+            }
+        }
+    }
+    int bestVotes = 0;
+    for (auto& vote : votes) {
+        if (vote.second > bestVotes) {
+            s_itemCollected = (ItemCollected_t)vote.first;
+            bestVotes = vote.second;
+        }
+    }
+    if (bestVotes < 3) {
+        s_itemCollected = nullptr;
+    }
+}
+
 void InstallQuestTargets(HMODULE game) {
     // the query walks the table's tree first: mov r10, [table + 16]
     BYTE* query = FindPattern(game, "48 89 4C 24 08 48 83 EC 78 4C 8B 15 ?? ?? ?? ?? 48 89 6C 24 68 4C 89 7C 24 38 49 8B 42 08 49 8B E9 45 8B F8 80 78 29 00");
@@ -288,6 +399,10 @@ void InstallQuestTargets(HMODULE game) {
     }
     s_questCount = FindQuestCount(game);
     s_npcIdOffset = FindNpcIdOffset(game);
+    FindTalkConditions(game);
+    FindItemCollected(game);
+    ModsLog("quest targets: collection done=%p talk table=%p talks=%p item collected=%p", s_collectionDone, s_questTalkTable, s_questTalks,
+        s_itemCollected);
     // the icon of a quest in the quest window
     s_questIconType = (QuestIconType_t)FindPattern(game,
         "48 89 4C 24 08 B8 ?? ?? 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 89 AC 24 ?? ?? 00 00 48 8D 4C 24 40 48 89 BC 24 ?? ?? 00 00 8B FA BD 01 00 00 00 E8");
