@@ -1,6 +1,7 @@
 #include "mods.h"
 #include "ping.h"
 #include <winsock2.h>
+#include <atomic>
 #include <detours/detours.h>
 
 // A ping that got no answer within this time counts as lost.
@@ -20,23 +21,24 @@ static DispatchPacket_t real_DispatchPacket = nullptr;
 static void* s_pingOwner = nullptr;
 static int s_pingStateOffset = -1;
 
-static volatile DWORD s_gameThreadId = 0;
-static volatile int s_outstanding = 0;
+// The client reads the game connection on its own thread (recv), while the answer is handled on the game thread once per frame,
+// and the overlay reads the ping where Direct3D draws. What more than one of them uses is atomic; the rest stays on the game thread.
+static std::atomic<DWORD> s_gameThreadId = 0;
+static std::atomic<int> s_outstanding = 0;
 // answers to pings that timed out, which may still arrive and must not reach the chat
-static volatile int s_lost = 0;
+static int s_lost = 0;
 static ULONGLONG s_lastSendTick = 0;
-static LARGE_INTEGER s_sentAt;
+static std::atomic<LONGLONG> s_sentAt = 0;
 static LARGE_INTEGER s_frequency;
 
-static volatile LONG s_lastPingMs = -1;
+static std::atomic<LONG> s_lastPingMs = -1;
 
-static volatile bool s_pingOverlayToggled = false;
-static volatile int s_pingResponseCount = 0;
-// The client reads the game connection on its own thread, while the answer is handled on the game thread once per frame.
+static std::atomic<bool> s_pingOverlayToggled = false;
+static int s_pingResponseCount = 0;
 // The time an answer of the ping's length arrived is taken from the reading thread, so that the frame rate does not count.
-static volatile bool s_sendingPing = false;
-static volatile SOCKET s_gameSocket = INVALID_SOCKET;
-static volatile LONGLONG s_answerArrivedAt = 0;
+static bool s_sendingPing = false;
+static std::atomic<SOCKET> s_gameSocket = INVALID_SOCKET;
+static std::atomic<LONGLONG> s_answerArrivedAt = 0;
 static SOCKET s_trackedSocket = INVALID_SOCKET;
 static bool s_streamSynced = false;
 static BYTE s_header[2];
@@ -53,10 +55,14 @@ static double MillisBetween(LONGLONG start, LONGLONG end) {
     return (end - start) * 1000.0 / s_frequency.QuadPart;
 }
 
-static double MillisSince(const LARGE_INTEGER& start) {
+static LONGLONG Now() {
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
-    return MillisBetween(start.QuadPart, now.QuadPart);
+    return now.QuadPart;
+}
+
+static double MillisSince(LONGLONG start) {
+    return MillisBetween(start, Now());
 }
 
 /// Splits the bytes read from the game connection into packets by their length headers. Starts with a read of a header,
@@ -90,9 +96,7 @@ static void TrackReceived(const BYTE* data, int size, int requested) {
         size -= taken;
         s_bodyLeft -= taken;
         if (s_bodyLeft == 0 && s_packetLength == PING_RESPONSE_LENGTH) {
-            LARGE_INTEGER now;
-            QueryPerformanceCounter(&now);
-            s_answerArrivedAt = now.QuadPart;
+            s_answerArrivedAt = Now();
         }
     }
 }
@@ -120,7 +124,7 @@ static int WSAAPI zzsend(_In_ SOCKET s, _In_reads_bytes_(len) const char FAR* bu
 
 /// Whether an answer of the ping's length arrived after the last request.
 static bool AnswerArrived() {
-    return s_answerArrivedAt >= s_sentAt.QuadPart;
+    return s_answerArrivedAt >= s_sentAt;
 }
 
 /// Sends the next ping request once the interval has passed. Only runs on the thread that handles incoming packets,
@@ -147,7 +151,7 @@ static void PingTick() {
     }
     s_lastSendTick = now;
     s_outstanding = 1;
-    QueryPerformanceCounter(&s_sentAt);
+    s_sentAt = Now();
     s_sendingPing = true;
     if (s_pingOwner && s_pingStateOffset >= 0) {
         UINT64* state = (UINT64*)((BYTE*)s_pingOwner + s_pingStateOffset);
@@ -174,8 +178,10 @@ static void __fastcall zzOnPingResponse(void* router, unsigned char serverType) 
         return;
     }
     s_outstanding = 0;
+    LONGLONG sentAt = s_sentAt;
     LONGLONG arrivedAt = s_answerArrivedAt;
-    s_lastPingMs = (LONG)((arrivedAt >= s_sentAt.QuadPart ? MillisBetween(s_sentAt.QuadPart, arrivedAt) : MillisSince(s_sentAt)) + 0.5);}
+    s_lastPingMs = (LONG)((arrivedAt >= sentAt ? MillisBetween(sentAt, arrivedAt) : MillisSince(sentAt)) + 0.5);
+}
 
 static char __fastcall zzDispatchPacket(void* router, void* packet, void* a3, void* a4) {
     s_gameThreadId = GetCurrentThreadId();
@@ -197,18 +203,20 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
 }
 
 int GetDisplayedPing() {
-    if (!IsInWorld() || s_lastPingMs < 0) {
+    // read once, as the game thread can change it meanwhile
+    LONG lastPingMs = s_lastPingMs;
+    if (!IsInWorld() || lastPingMs < 0) {
         return -1;
     }
     // while an answer is overdue, show how long it has been missing so that a lag spike is visible right away; in steps of
     // 100 ms, as each new value renders the text again
     if (s_outstanding > 0 && !AnswerArrived()) {
         int waiting = (int)MillisSince(s_sentAt) / 100 * 100;
-        if (waiting > s_lastPingMs) {
+        if (waiting > lastPingMs) {
             return waiting;
         }
     }
-    return s_lastPingMs;
+    return lastPingMs;
 }
 
 // push rbx; sub rsp, imm32
