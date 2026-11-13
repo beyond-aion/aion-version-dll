@@ -22,6 +22,8 @@ typedef __int64(__fastcall* ShowAlert_t)(void* alerts, const wchar_t* text, __in
     __int64 a8);
 
 static ChatAddMessage_t real_ChatAddMessage = nullptr;
+// The channel part of the entry point, which the client also calls directly, as for the echo of a whisper sent or its own system messages
+static ChatAddMessage_t real_ChatAddChannelMessage = nullptr;
 static FilterChatText_t real_FilterChatText = nullptr;
 static ShowAlert_t real_ShowAlert = nullptr;
 
@@ -43,27 +45,46 @@ static void MakePrefix() {
     s_prefixLength = length > 0 ? length : 0;
 }
 
+/// Shows the message with the time in front: a channel message gets it from the filter, which would mangle its markup if it came before.
+static __int64 AddWithTime(ChatAddMessage_t add, void* chat, int type, const wchar_t* text) {
+    MakePrefix();
+    __int64 result;
+    if (type < FIRST_SYSTEM_TYPE && real_FilterChatText) {
+        s_prefixPending = true;
+        result = add(chat, type, text);
+        s_prefixPending = false;
+    } else {
+        wchar_t buffer[MAX_CHAT_TEXT + 64];
+        wcscpy_s(buffer, s_prefix);
+        wcsncpy_s(buffer + s_prefixLength, _countof(buffer) - s_prefixLength, text, MAX_CHAT_TEXT - s_prefixLength);
+        result = add(chat, type, buffer);
+    }
+    s_prefixLength = 0;
+    return result;
+}
+
 static __int64 __fastcall zzChatAddMessage(void* chat, int type, const wchar_t* text) {
+    // channel messages are timed where the entry point hands them over
+    if (type < FIRST_SYSTEM_TYPE && real_ChatAddChannelMessage) {
+        return real_ChatAddMessage(chat, type, text);
+    }
     if (text && type >= FIRST_SYSTEM_CHAT_TYPE && *text == CONTINUATION_MARK) {
         return real_ChatAddMessage(chat, type, text + 1);
     }
     if (!text || !*text || type >= FIRST_NON_CHAT_TYPE || (type >= FIRST_ALERT_TYPE && !real_ShowAlert)) {
         return real_ChatAddMessage(chat, type, text);
     }
-    MakePrefix();
-    __int64 result;
-    if (type < FIRST_SYSTEM_TYPE && real_FilterChatText) {
-        s_prefixPending = true;
-        result = real_ChatAddMessage(chat, type, text);
-        s_prefixPending = false;
-    } else {
-        wchar_t buffer[MAX_CHAT_TEXT + 64];
-        wcscpy_s(buffer, s_prefix);
-        wcsncpy_s(buffer + s_prefixLength, _countof(buffer) - s_prefixLength, text, MAX_CHAT_TEXT - s_prefixLength);
-        result = real_ChatAddMessage(chat, type, buffer);
+    return AddWithTime(real_ChatAddMessage, chat, type, text);
+}
+
+static __int64 __fastcall zzChatAddChannelMessage(void* chat, int type, const wchar_t* text) {
+    if (text && type >= FIRST_SYSTEM_CHAT_TYPE && *text == CONTINUATION_MARK) {
+        return real_ChatAddChannelMessage(chat, type, text + 1);
     }
-    s_prefixLength = 0;
-    return result;
+    if (!text || !*text || type >= FIRST_SYSTEM_TYPE) {
+        return real_ChatAddChannelMessage(chat, type, text);
+    }
+    return AddWithTime(real_ChatAddChannelMessage, chat, type, text);
 }
 
 /// Puts the time in front of a channel message once the filter is done with it.
@@ -104,16 +125,18 @@ static BYTE* FunctionUsing(HMODULE game, const char* text) {
     return lea ? FunctionStart(lea) : nullptr;
 }
 
-/// The filter the channel function runs over a message: lea rcx, [filter]; mov r8d, 4096; ...; call
-static FilterChatText_t FindChatFilter(BYTE* addMessage) {
-    // the message entry point hands channel messages over: cmp edx, 73; ...; jge; call channel
-    BYTE* channel = nullptr;
+/// The channel function the message entry point hands channel messages over to: cmp edx, 73; ...; jge; call channel
+static BYTE* FindChannelFunction(BYTE* addMessage) {
     for (BYTE* p = addMessage; p < addMessage + 0x30; p++) {
         if (p[0] == 0x7D && p[2] == 0xE8) {
-            channel = ResolveRip(p + 3, p + 7);
-            break;
+            return ResolveRip(p + 3, p + 7);
         }
     }
+    return nullptr;
+}
+
+/// The filter the channel function runs over a message: lea rcx, [filter]; mov r8d, 4096; ...; call
+static FilterChatText_t FindChatFilter(BYTE* channel) {
     for (BYTE* p = channel; p && p < channel + 0x100; p++) {
         if (p[0] == 0x48 && p[1] == 0x8D && p[2] == 0x0D && memcmp(p + 7, "\x41\xB8\x00\x10\x00\x00", 6) == 0) {
             for (BYTE* q = p + 13; q < p + 0x30; q++) {
@@ -148,9 +171,13 @@ void InstallChatTime(HMODULE game) {
     }
     // the message entry point also shows GM alerts on screen
     real_ChatAddMessage = (ChatAddMessage_t)FunctionUsing(game, GM_ALERT_STYLE);
-    real_FilterChatText = real_ChatAddMessage ? FindChatFilter((BYTE*)real_ChatAddMessage) : nullptr;
+    BYTE* channel = real_ChatAddMessage ? FindChannelFunction((BYTE*)real_ChatAddMessage) : nullptr;
+    real_FilterChatText = channel ? FindChatFilter(channel) : nullptr;
+    // the filter puts the time in, so without it the channel function is left to the entry point as before
+    real_ChatAddChannelMessage = real_FilterChatText && InModule(game, channel, 16) ? (ChatAddMessage_t)channel : nullptr;
     real_ShowAlert = real_ChatAddMessage ? FindShowAlert(game) : nullptr;
-    ModsLog("chat time: add=%p filter=%p alert=%p", real_ChatAddMessage, real_FilterChatText, real_ShowAlert);
+    ModsLog("chat time: add=%p channel=%p filter=%p alert=%p", real_ChatAddMessage, real_ChatAddChannelMessage, real_FilterChatText,
+        real_ShowAlert);
     if (!real_ChatAddMessage) {
         return;
     }
@@ -158,6 +185,9 @@ void InstallChatTime(HMODULE game) {
         DetourAttach(&(PVOID&)real_ShowAlert, zzShowAlert);
     }
     DetourAttach(&(PVOID&)real_ChatAddMessage, zzChatAddMessage);
+    if (real_ChatAddChannelMessage) {
+        DetourAttach(&(PVOID&)real_ChatAddChannelMessage, zzChatAddChannelMessage);
+    }
     SetChatLogFilter(SkipChatTime);
     if (real_FilterChatText) {
         DetourAttach(&(PVOID&)real_FilterChatText, zzFilterChatText);
