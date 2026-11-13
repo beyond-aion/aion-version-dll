@@ -64,7 +64,7 @@ static ItemCollected_t s_itemCollected = nullptr;
 // the scripts the talk lookup writes, at most 32 (the client gives it 264 bytes)
 static constexpr int MAX_TALKS = 33;
 // item counts change without a quest changing, so the conditions are asked again this often
-static constexpr ULONGLONG RECHECK_MS = 250;
+static constexpr ULONGLONG RECHECK_MS = 500;
 
 typedef void(__fastcall* SetQuestMarker_t)(BYTE* npc, int questId, int state, int kind);
 typedef void*(__fastcall* FindEffect_t)(void* effects, const char* name);
