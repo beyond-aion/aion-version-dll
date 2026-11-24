@@ -9,13 +9,8 @@ static decltype(LoadLibraryW)* real_LoadLibraryW = LoadLibraryW;
 /// Skips loading the xigncode module (.xem) by returning straight into the caller's success branch, which sets eax to 1.
 static HMODULE WINAPI zzLoadLibraryW(_In_ LPCWSTR lpLibFileName) {
     if (lpLibFileName && wcsstr(lpLibFileName, L".xem")) {
-#if defined(_M_AMD64)
         // mov eax, 1
         static const BYTE success[] = { 0xB8, 1, 0, 0, 0 };
-#else
-        // xor eax, eax; add esp, 0Ch; inc eax
-        static const BYTE success[] = { 0x33, 0xC0, 0x83, 0xC4, 0x0C, 0x40 };
-#endif
         BYTE* caller = (BYTE*)_ReturnAddress();
         for (BYTE* p = caller; p < caller + 1000; p++) {
             if (memcmp(p, success, sizeof(success)) == 0) {

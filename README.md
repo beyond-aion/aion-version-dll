@@ -84,16 +84,16 @@ Optional additions to the game client, which can be enabled via `mods.ini`:
 The mods find their places in the client by content rather than by fixed addresses, so they work with different client versions (3.9, 4.6, 4.8 and 5.8 have been verified). A fix or mod that finds nothing to change simply stays off, which `version.log` next to `version.dll` shows, together with any problems in `mods.ini`. When the client crashes, `version.log` also gets the crash: where it happened, the registers and the calls that led there.
 
 ## Building
-This project depends on [MS Detours](https://github.com/Microsoft/Detours), [libdeflate](https://github.com/ebiggers/libdeflate) and [mimalloc](https://github.com/microsoft/mimalloc), which [vcpkg](https://vcpkg.io) fetches and builds as static libraries on the first build, as listed in `vcpkg.json`. Visual Studio 2026 includes vcpkg, so the project builds straight away; another vcpkg is used when `VCPKG_ROOT` points to it. The 64-bit build copies `mods.ini` next to `version.dll`. The overlay triplet in `triplets` builds mimalloc with `MI_USE_RTLGENRANDOM`: its default random seed, `BCryptGenRandom`, hangs the 64-bit client on Windows 7 while Windows loads `version.dll`.
+This project depends on [MS Detours](https://github.com/Microsoft/Detours), [libdeflate](https://github.com/ebiggers/libdeflate) and [mimalloc](https://github.com/microsoft/mimalloc), which [vcpkg](https://vcpkg.io) fetches and builds as static libraries on the first build, as listed in `vcpkg.json`. Visual Studio 2026 includes vcpkg, so the project builds straight away; another vcpkg is used when `VCPKG_ROOT` points to it. The build copies `mods.ini` next to `version.dll`. Only the 64-bit client is supported: the 32-bit build was dropped, as it carried a part of the fixes and none of the mods. The overlay triplet in `triplets` builds mimalloc with `MI_USE_RTLGENRANDOM`: its default random seed, `BCryptGenRandom`, hangs the 64-bit client on Windows 7 while Windows loads `version.dll`.
 
 ## Installation
-1. Copy each `version.dll` to the respective `bin32` or `bin64` folder within the game root directory.
-2. **Optional:** If you want to enable any mods, copy `mods.ini` to the `bin64` folder and edit the file. Mods are only supported for the 64 bit client.
+1. Copy `version.dll` to the `bin64` folder within the game root directory.
+2. **Optional:** If you want to enable any mods, copy `mods.ini` to the `bin64` folder and edit the file.
 3. **Optional:** If you want to use DXVK, copy `d3d9.dll` from the [latest DXVK release](https://github.com/doitsujin/dxvk/releases) to the same folders and make sure you're using the latest graphics driver. If your graphics card is incompatible because it is too old, you can try the [latest DXVK-Sarek release](https://github.com/pythonlover02/DXVK-Sarek/releases/latest) instead.  
 DXVK can be tweaked via an optional config file. See below for recommended settings.
 
 ## ⚙️ Recommended DXVK Configuration (optional)
-Create a file named `dxvk.conf` in the **game root directory** (NOT `bin32/bin64`). The options below are checked against DXVK 3.1.1.
+Create a file named `dxvk.conf` in the **game root directory** (NOT `bin64`). The options below are checked against DXVK 3.1.1.
 ```ini
 # Enable FPS counter (different from the one the game client provides)
 # dxvk.hud = fps

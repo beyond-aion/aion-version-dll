@@ -4,9 +4,7 @@
 #include "install_report.h"
 #include <stdio.h>
 #include <detours/detours.h>
-#if defined(_M_AMD64)
 #include "mods.h"
-#endif
 
 static bool s_gfxEnabled = false;
 
@@ -65,7 +63,6 @@ static void Install(const char* id, void (*install)(Args...), Args... args) {
     install(args...);
 }
 
-#if defined(_M_AMD64)
 void InstallCrashLog();
 void InstallReserveFix();
 void InstallColorTagFix(HMODULE game);
@@ -81,7 +78,6 @@ static void InstallGameFixes(HMODULE game) {
     Install("server_check_fix", InstallServerCheckFix, game);
     Install("pet_decoration_fix", InstallPetDecorationFix, game);
 }
-#endif
 
 static decltype(SetWindowLongA)* real_SetWindowLongA = SetWindowLongA;
 static LONG WINAPI zzSetWindowLongA(_In_ HWND hWnd, _In_ int nIndex, _In_ LONG dwNewLong) {
@@ -133,25 +129,18 @@ static void InstallPatch(HINSTANCE self) {
         Install("shader_fix", InstallShaderFix);
         Install("fullscreen_fix", InstallFullscreenFix);
         Install("chat_log_fix", InstallChatLogFix);
-#if defined(_M_AMD64)
         Install("stack_fix", Install64BitStackFix);
         Install("crash_log", InstallCrashLog);
         Install("reserve_fix", InstallReserveFix);
         Install("light_rect_fix", InstallLightRectFixOnLoad);
         OnModuleLoad(L"Game.dll", InstallGameFixes, true);
         InstallMods();
-#endif
         LONG error = DetourTransactionCommit();
         ModsLog("fixes committed: %ld", error);
 
         Install("affinity_fix", FixClientStartupWithHighCoreCountCpus);
     }
-#if defined(_M_AMD64)
     LogInstallSummary("at the start", false);
-#else
-    // the 32-bit build has no mods, and so no summary with Game.dll
-    LogInstallSummary("at the start", true);
-#endif
 }
 
 BOOL WINAPI DllMain(_In_ HINSTANCE hinstDLL, _In_ DWORD fdwReason, _In_ LPVOID lpvReserved) {

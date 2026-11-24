@@ -35,15 +35,9 @@ static_assert(_countof(ENTRY_WRAPPERS) == _countof(s_watches), "one entry wrappe
 /// Points the loader's entry for the module at the wrapper of the watch.
 static bool WrapEntry(HMODULE module, int index) {
     // PEB->Ldr->InLoadOrderModuleList; each entry starts with its links, followed by DllBase and EntryPoint after one more pair of links
-#if defined(_M_AMD64)
     BYTE* peb = (BYTE*)__readgsqword(0x60);
     LIST_ENTRY* head = (LIST_ENTRY*)(*(BYTE**)(peb + 0x18) + 0x10);
     const int dllBase = 0x30, entryPointOffset = 0x38;
-#else
-    BYTE* peb = (BYTE*)__readfsdword(0x30);
-    LIST_ENTRY* head = (LIST_ENTRY*)(*(BYTE**)(peb + 0x0C) + 0x0C);
-    const int dllBase = 0x18, entryPointOffset = 0x1C;
-#endif
     for (LIST_ENTRY* link = head->Flink; link != head; link = link->Flink) {
         BYTE* entry = (BYTE*)link;
         if (*(HMODULE*)(entry + dllBase) != module) {

@@ -12,12 +12,7 @@
 static const char CHAT_LOG[] = "Chat.log";
 static const char LINE_FORMAT[] = "%.4d.%.2d.%.2d %.2d:%.2d:%.2d : %s \n";
 
-#if defined(_M_AMD64)
 typedef __int64(__fastcall* ChatLogWrite_t)(void* chat, const wchar_t* text, __int64 flag);
-#else
-// __thiscall with the text on the stack, which __fastcall with an unused edx matches
-typedef void(__fastcall* ChatLogWrite_t)(void* chat, void* unused, const wchar_t* text);
-#endif
 typedef void*(__thiscall* GetConsole_t)(void* system);
 typedef void*(__thiscall* GetCVar_t)(void* console, const char* name, bool caseSensitive);
 typedef int(__thiscall* GetIVal_t)(void* cvar);
@@ -83,16 +78,10 @@ static void WriteLine(const wchar_t* text) {
     }
 }
 
-#if defined(_M_AMD64)
 static __int64 __fastcall zzChatLogWrite(void* chat, const wchar_t* text, __int64 flag) {
     WriteLine(text);
     return 0;
 }
-#else
-static void __fastcall zzChatLogWrite(void* chat, void* unused, const wchar_t* text) {
-    WriteLine(text);
-}
-#endif
 
 /// Departs from the client: 5.x clients delete Chat.log at start when chat logging is off at that moment, and the in-game option
 /// turns it on only later, so the log of every earlier session is lost. Chat.log is kept; drop this hook to get the client's behaviour back.
@@ -124,7 +113,6 @@ static BYTE* FindString(HMODULE module, const char* text, size_t length) {
     return ScanImage(module, length, [&](BYTE* p) { return *p == (BYTE)*text && memcmp(p, text, length) == 0; });
 }
 
-#if defined(_M_AMD64)
 
 /// lea reg, [rip+text]
 static BYTE* FindReference(HMODULE module, const void* text) {
@@ -160,43 +148,6 @@ static void ReadWriter(BYTE* writer, BYTE* end) {
     }
 }
 
-#else
-
-/// push offset text
-static BYTE* FindReference(HMODULE module, const void* text) {
-    return ScanImage(module, 5, [&](BYTE* p) { return p[0] == 0x68 && *(const void**)(p + 1) == text; });
-}
-
-/// push ebp; mov ebp, esp after the padding or the return of the function before
-static BYTE* FunctionStart(BYTE* address) {
-    for (BYTE* p = address; p > address - 0x400; p--) {
-        if (p[0] == 0x55 && p[1] == 0x8B && p[2] == 0xEC && (p[-1] == 0xCC || p[-1] == 0x90 || p[-1] == 0xC3)) {
-            return p;
-        }
-    }
-    return nullptr;
-}
-
-/// mov ecx, [system]; then the virtual calls: mov reg, [reg2+offset]; ...; call reg
-static void ReadWriter(BYTE* writer, BYTE* end) {
-    int calls = 0;
-    for (BYTE* p = writer; p + 6 <= end && calls < 3; p++) {
-        int mod = p[1] >> 6, reg = (p[1] >> 3) & 7, rm = p[1] & 7;
-        if (!s_system && p[0] == 0x8B && p[1] == 0x0D) {
-            s_system = *(void***)(p + 2);
-        } else if (p[0] == 0x8B && rm != 4 && (mod == 1 || mod == 2)) {
-            BYTE* next = p + (mod == 1 ? 3 : 6);
-            for (BYTE* q = next; q < next + 8 && q + 2 <= end; q++) {
-                if (q[0] == 0xFF && q[1] == 0xD0 + reg) {
-                    s_calls[calls++] = mod == 1 ? p[2] : *(DWORD*)(p + 2);
-                    break;
-                }
-            }
-        }
-    }
-}
-
-#endif
 
 /// The writer formats the line with the Chat.log format, and before it asks for the variable.
 static void InstallWriter(HMODULE game) {
