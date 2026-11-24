@@ -46,6 +46,8 @@ static POINT s_pressedAt;
 // in the other program and turns by every move there. Until its window is in front again, the client keeps the cursor where it put it last
 // and sees no move, and the cursor of the other program stays where it is.
 static bool s_turnLeft;
+// The game and renderer can both restore the old click during activation, before the message loop sees the foreground again.
+static bool s_skipInterruptedRestore;
 
 /// Pointer speed multipliers of the mouse settings, by the speed 1..20, so that the camera turns as fast as it did with cursor moves.
 static const double POINTER_SPEEDS[] = { 1 / 32.0, 1 / 16.0, 1 / 8.0, 2 / 8.0, 3 / 8.0, 4 / 8.0, 5 / 8.0, 6 / 8.0, 7 / 8.0, 1, 1.25, 1.5, 1.75, 2,
@@ -199,12 +201,26 @@ static bool TurnLeft() {
     return s_turnLeft;
 }
 
+static bool FromD3D9(const void* address) {
+    HMODULE module = nullptr;
+    char name[MAX_PATH];
+    return GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)address, &module)
+        && K32GetModuleBaseNameA(GetCurrentProcess(), module, name, _countof(name)) && _stricmp(name, "d3d9.dll") == 0;
+}
+
 static BOOL WINAPI zzSetCursorPos(_In_ int X, _In_ int Y) {
-    if (TurnLeft() && FromGame(_ReturnAddress())) {
+    void* caller = _ReturnAddress();
+    bool onWindowThread = OnWindowThread();
+    bool turnLeft = TurnLeft();
+    bool fromGame = (turnLeft || onWindowThread) && FromGame(caller);
+    if (turnLeft && fromGame) {
         s_warp = { X, Y };
         return TRUE;
     }
-    if (s_rawInput && OnWindowThread() && FromGame(_ReturnAddress())) {
+    if (onWindowThread && s_skipInterruptedRestore && GetForegroundWindow() == s_window && (fromGame || FromD3D9(caller))) {
+        return TRUE;
+    }
+    if (s_rawInput && onWindowThread && fromGame) {
         if (!s_turning && AnyButtonHeld() && (GetCapture() == s_window || (s_releasedMidTurn && X == s_warp.x && Y == s_warp.y))) {
             StartTurning(X, Y);
         }
@@ -242,6 +258,7 @@ static BOOL WINAPI zzReleaseCapture() {
         StopTurning();
         if (GetForegroundWindow() != s_window) {
             s_turnLeft = true;
+            s_skipInterruptedRestore = true;
         } else if (AnyButtonHeld()) {
             real_SetCursorPos(s_warp.x, s_warp.y);
             s_releasedMidTurn = true;
@@ -324,7 +341,11 @@ static void OnButton(MSG* msg, bool removed) {
     case WM_LBUTTONDBLCLK:
     case WM_RBUTTONDOWN:
     case WM_RBUTTONDBLCLK:
-        if (removed && !s_turning && !s_releasedMidTurn && !s_deadZone) {
+        if (!removed) {
+            break;
+        }
+        s_skipInterruptedRestore = false;
+        if (!s_turning && !s_releasedMidTurn && !s_deadZone) {
             s_pressedAt = msg->pt;
             s_deadZone = true;
         }
@@ -347,13 +368,18 @@ static void OnButton(MSG* msg, bool removed) {
 static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UINT wMsgFilterMin, _In_ UINT wMsgFilterMax, _In_ UINT wRemoveMsg) {
     if (OnWindowThread()) {
         bool foreground = GetForegroundWindow() == s_window;
-        if (!foreground) {
+        if (foreground) {
+            s_skipInterruptedRestore = false;
+        } else {
             memset(s_keysDown, 0, sizeof(s_keysDown)); // the key ups go elsewhere
         }
         UpdatePrintScreenHotKey(s_window, foreground);
     }
     if (s_turning && OnWindowThread() && (!AnyButtonHeld() || GetForegroundWindow() != s_window)) {
         s_turnLeft = GetForegroundWindow() != s_window;
+        if (s_turnLeft) {
+            s_skipInterruptedRestore = true;
+        }
         StopTurning();
     }
     if (s_releasedMidTurn && OnWindowThread() && !AnyButtonHeld()) {
