@@ -2,9 +2,11 @@
 #include <windowsx.h>
 #include <intrin.h>
 #include <psapi.h>
+#include <cmath>
 #include <detours/detours.h>
 #include "install_report.h"
 #include "module_load.h"
+#include "mods.h"
 
 #pragma warning(disable: 28159)
 
@@ -52,6 +54,88 @@ static bool s_skipInterruptedRestore;
 /// Pointer speed multipliers of the mouse settings, by the speed 1..20, so that the camera turns as fast as it did with cursor moves.
 static const double POINTER_SPEEDS[] = { 1 / 32.0, 1 / 16.0, 1 / 8.0, 2 / 8.0, 3 / 8.0, 4 / 8.0, 5 / 8.0, 6 / 8.0, 7 / 8.0, 1, 1.25, 1.5, 1.75, 2,
     2.25, 2.5, 2.75, 3, 3.25, 3.5 };
+
+// Enhance pointer precision: Windows moves the pointer farther per mouse count the faster the mouse goes. Raw input carries the counts before
+// that, so the curve is applied here the way win32kbase of Windows 10 and 11 applies it (CDeviceAcceleration::Accelerate): the speed of a
+// report is the larger of |dx| and |dy| plus half the smaller one, in counts; the curve of HKCU\Control Panel\Mouse goes through the points
+// (SmoothMouseXCurve x 3.5, SmoothMouseYCurve x DPI / 120 x pointer speed / 10) and goes on along its last segment; a report moves the pointer
+// by the curve's value at its speed, shared between x and y as the counts are; when the speed climbs onto a higher segment than the last
+// report's, the gain is the mean of both segments'. The pointer speed is linear here, the table above is only for the pointer without it. The
+// client without this DLL was not DPI aware and saw the pointer in pixels of 96 DPI whatever the scale of the screen, so the curve is built
+// for 96 DPI. Wine keeps no curve in the registry and does not accelerate this way, so without one the camera turns by the counts alone.
+static bool s_ballistic;
+static double s_ballisticX[5]; // speeds in counts per report
+static double s_ballisticSlope[4], s_ballisticIntercept[4];
+static int s_ballisticSegment;
+static bool s_ballisticLogged;
+
+/// The five 16.16 fixed point values of one SmoothMouse curve, each first in its 8-byte point.
+static bool ReadSmoothCurve(const wchar_t* name, double* points) {
+    BYTE data[40] = {};
+    DWORD size = sizeof(data);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Control Panel\\Mouse", name, RRF_RT_REG_BINARY, nullptr, data, &size) != ERROR_SUCCESS
+        || size < sizeof(data)) {
+        return false;
+    }
+    for (int i = 0; i < 5; i++) {
+        points[i] = *(const DWORD*)(data + i * 8) / 65536.0;
+    }
+    return true;
+}
+
+/// Builds the curve from the mouse settings as they are now, at the start of every turn; MouseSpeed 0 is the setting turned off.
+static void ReadBallistic(int pointerSpeed) {
+    int accel[3] = {};
+    SystemParametersInfoW(SPI_GETMOUSE, 0, accel, 0);
+    double x[5], y[5];
+    s_ballistic = accel[2] && g_modsConfig.cameraAcceleration && ReadSmoothCurve(L"SmoothMouseXCurve", x)
+        && ReadSmoothCurve(L"SmoothMouseYCurve", y);
+    if (!s_ballistic) {
+        if (!s_ballisticLogged) {
+            s_ballisticLogged = true;
+            MODULE_LOG("camera fix: pointer acceleration off");
+        }
+        return;
+    }
+    const double DPI = 96;
+    double scale = DPI / 120 * pointerSpeed / 10;
+    for (int i = 0; i < 5; i++) {
+        s_ballisticX[i] = x[i] * 3.5;
+        y[i] *= scale;
+    }
+    for (int i = 0; i < 4; i++) {
+        double width = s_ballisticX[i + 1] - s_ballisticX[i];
+        // a segment without width moves nothing, as in Windows
+        s_ballisticSlope[i] = width != 0 ? (y[i + 1] - y[i]) / width : 0;
+        s_ballisticIntercept[i] = width != 0 ? y[i] - s_ballisticX[i] * s_ballisticSlope[i] : 0;
+    }
+    s_ballisticSegment = 0;
+    if (!s_ballisticLogged) {
+        s_ballisticLogged = true;
+        MODULE_LOG("camera fix: pointer acceleration on, speed %d, curve %.2f/%.2f %.2f/%.2f %.2f/%.2f %.2f/%.2f", pointerSpeed, x[1], y[1] / scale,
+            x[2], y[2] / scale, x[3], y[3] / scale, x[4], y[4] / scale);
+    }
+}
+
+/// How far the pointer moves per count of a report with these counts.
+static double BallisticGain(LONG dx, LONG dy) {
+    double ax = fabs((double)dx), ay = fabs((double)dy);
+    double speed = max(ax, ay) + min(ax, ay) / 2;
+    if (speed <= 0) {
+        return 0;
+    }
+    int above = 0;
+    while (above < 4 && speed > s_ballisticX[above]) {
+        above++;
+    }
+    int segment = max(above - 1, 0);
+    double gain = s_ballisticSlope[segment] + s_ballisticIntercept[segment] / speed;
+    if (s_ballisticSegment < segment) {
+        gain = (gain + s_ballisticSlope[s_ballisticSegment] + s_ballisticIntercept[s_ballisticSegment] / speed) / 2;
+    }
+    s_ballisticSegment = segment;
+    return gain;
+}
 
 static decltype(SetCursorPos)* real_SetCursorPos = SetCursorPos;
 static decltype(GetCursorPos)* real_GetCursorPos = GetCursorPos;
@@ -104,7 +188,9 @@ static void StartTurning(int x, int y) {
     real_GetCursorPos(&cursor);
     int speed = 10;
     SystemParametersInfoW(SPI_GETMOUSESPEED, 0, &speed, 0);
-    s_speed = POINTER_SPEEDS[max(1, min(20, speed)) - 1];
+    speed = max(1, min(20, speed));
+    s_speed = POINTER_SPEEDS[speed - 1];
+    ReadBallistic(speed);
     s_restX = s_restY = 0;
     s_virtual = { x, y };
     s_movePending = false;
@@ -166,8 +252,11 @@ static void OnRawInput(HRAWINPUT handle) {
         if (!s_turning) {
             return;
         }
-        s_restX += input.data.mouse.lLastX * s_speed;
-        s_restY += input.data.mouse.lLastY * s_speed;
+        LONG rawX = input.data.mouse.lLastX;
+        LONG rawY = input.data.mouse.lLastY;
+        double factor = s_ballistic ? BallisticGain(rawX, rawY) : s_speed;
+        s_restX += rawX * factor;
+        s_restY += rawY * factor;
         dx = (LONG)s_restX;
         dy = (LONG)s_restY;
         s_restX -= dx;
