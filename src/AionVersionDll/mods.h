@@ -30,7 +30,6 @@ struct ModsConfig {
     bool uiScaleFit;
     int largeGlyphFrom; // pixel height
     int fastStart; // FAST_START_*
-    bool tableDump;
     bool mimalloc;
     int animationLod; // meters, 0 = off
     bool plainSystemCfg;

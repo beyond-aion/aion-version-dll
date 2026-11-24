@@ -3,6 +3,7 @@
 #include <array>
 #include <stdio.h>
 #include <string.h>
+#include <string>
 #include <utility>
 
 // 4.x clients can keep their largest tables (items, skills, NPCs, spawns and more) as binary dumps in Data/Dump and load them from there on
@@ -12,6 +13,9 @@
 // change, as after a patch. The mod sets the flag. In 4.8 the writers look for their source files in the region folder (data\USA\items\...),
 // where the client has none, so the item, skill and NPC dumps are never written; while a dump method runs, a file of data\<region>\ that
 // CryPak cannot open is tried without the region folder, which is where the tables load it from.
+// The client only compares the sizes of the source files, so an edit that keeps a file's size (a 10 made 20) would leave the old table in
+// use. The mod therefore keeps a stamp of the size and time of every .pak under Data and L10N next to the dumps and deletes the dumps
+// when it changes, so that they are written anew.
 
 namespace {
 
@@ -188,6 +192,86 @@ constexpr std::array<PVOID, sizeof...(N)> MakeHooks(std::integer_sequence<int, N
     return { (PVOID)&zzDumpMethod<N>... };
 }
 
+/// FNV-1a over the relative path, size and last write time of every .pak below folder.
+void StampPaks(const std::wstring& folder, const std::wstring& relative, unsigned long long& hash, int& count) {
+    WIN32_FIND_DATAW found;
+    HANDLE search = FindFirstFileW((folder + L"\\*").c_str(), &found);
+    if (search == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    do {
+        std::wstring name = found.cFileName;
+        if (name == L"." || name == L"..") {
+            continue;
+        }
+        if (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            StampPaks(folder + L"\\" + name, relative + name + L"\\", hash, count);
+            continue;
+        }
+        if (name.size() < 4 || _wcsicmp(name.c_str() + name.size() - 4, L".pak") != 0) {
+            continue;
+        }
+        std::wstring key = relative + name;
+        auto mix = [&](const void* data, size_t size) {
+            for (size_t i = 0; i < size; i++) {
+                hash = (hash ^ ((const BYTE*)data)[i]) * 0x100000001B3ull;
+            }
+        };
+        mix(key.data(), key.size() * sizeof(wchar_t));
+        mix(&found.nFileSizeLow, sizeof(found.nFileSizeLow));
+        mix(&found.nFileSizeHigh, sizeof(found.nFileSizeHigh));
+        mix(&found.ftLastWriteTime, sizeof(found.ftLastWriteTime));
+        count++;
+    } while (FindNextFileW(search, &found));
+    FindClose(search);
+}
+
+/// Deletes the dumps in Data\Dump when the game data changed since they were written: the folder of the client is the parent of bin64.
+void DropStaleDumps() {
+    wchar_t path[MAX_PATH];
+    DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    std::wstring root(path, length);
+    for (int up = 0; up < 2 && root.rfind(L'\\') != std::wstring::npos; up++) {
+        root.resize(root.rfind(L'\\'));
+    }
+    unsigned long long hash = 0xCBF29CE484222325ull;
+    int count = 0;
+    StampPaks(root + L"\\Data", L"Data\\", hash, count);
+    StampPaks(root + L"\\L10N", L"L10N\\", hash, count);
+    std::wstring dump = root + L"\\Data\\Dump";
+    std::wstring stampFile = dump + L"\\version.dll.stamp";
+    char stamp[32];
+    sprintf_s(stamp, "%016llX %d", hash, count);
+    char old[32] = {};
+    HANDLE file = CreateFileW(stampFile.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file != INVALID_HANDLE_VALUE) {
+        DWORD read = 0;
+        ReadFile(file, old, sizeof(old) - 1, &read, nullptr);
+        CloseHandle(file);
+    }
+    if (strcmp(old, stamp) == 0) {
+        return;
+    }
+    int deleted = 0;
+    WIN32_FIND_DATAW found;
+    HANDLE search = FindFirstFileW((dump + L"\\*.dat").c_str(), &found);
+    if (search != INVALID_HANDLE_VALUE) {
+        do {
+            deleted += DeleteFileW((dump + L"\\" + found.cFileName).c_str()) ? 1 : 0;
+        } while (FindNextFileW(search, &found));
+        FindClose(search);
+    }
+    CreateDirectoryW(dump.c_str(), nullptr);
+    file = CreateFileW(stampFile.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+    if (file != INVALID_HANDLE_VALUE) {
+        DWORD written = 0;
+        WriteFile(file, stamp, (DWORD)strlen(stamp), &written, nullptr);
+        CloseHandle(file);
+    }
+    ModsLog("table dump: %d .pak files changed since the dumps were written (stamp %s, was %s), %d dumps deleted", count, stamp, old[0] ? old : "none",
+        deleted);
+}
+
 void Apply(const DumpPlaces& places) {
     if (!places.hasDumps) {
         ModsLog("table dump: the client has no table dumps of this kind (5.x keeps tables.dmp by itself)");
@@ -198,6 +282,9 @@ void Apply(const DumpPlaces& places) {
         ModsLog("table dump: not found (system %p, %zu dump methods)", places.system, places.methods.size());
         ReportStatus(InstallStatus::NotFound);
         return;
+    }
+    if (!g_dryRun) {
+        DropStaleDumps();
     }
     static const auto HOOKS = MakeHooks(std::make_integer_sequence<int, MAX_METHODS>());
     s_system = places.system;

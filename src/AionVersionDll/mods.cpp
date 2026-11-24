@@ -53,7 +53,6 @@ static const Setting SETTINGS[] = {
     { L"Login", L"SkipAgreement", Setting::Bool, &g_modsConfig.skipAgreement, 0 },
     { L"Destroy", L"SkipTypedConfirm", Setting::Bool, &g_modsConfig.skipTypedConfirm, 0 },
     { L"Performance", L"LoadingMode", Setting::Int, &g_modsConfig.fastStart, FAST_START_OFF, FAST_START_OFF, FAST_START_FULL },
-    { L"Performance", L"TableDump", Setting::Bool, &g_modsConfig.tableDump, 0 },
     { L"Performance", L"Mimalloc", Setting::Bool, &g_modsConfig.mimalloc, 0 },
     { L"Performance", L"AnimationLod", Setting::Int, &g_modsConfig.animationLod, 0, 0, 200 },
     { L"UiScale", L"Fit", Setting::Bool, &g_modsConfig.uiScaleFit, 0 },
@@ -114,7 +113,7 @@ static const InstallEntry GAME_MODS[] = {
     { "quick_destroy", [] { return Config().skipTypedConfirm; }, InstallQuickDestroy },
     { "skip_logo", [] { return Config().fastStart == FAST_START_FULL; }, InstallSkipLogo },
     { "fast_load", [] { return Config().fastStart != FAST_START_OFF; }, InstallFastLoad },
-    { "table_dump", [] { return Config().tableDump; }, InstallTableDump },
+    { "table_dump", [] { return Config().fastStart != FAST_START_OFF; }, InstallTableDump },
     { "ui_xml", nullptr,
         [](HMODULE game) {
             s_uiXml = InstallUiXml(game);
