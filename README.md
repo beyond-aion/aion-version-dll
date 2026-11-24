@@ -35,6 +35,7 @@ The DLL automatically applies fixes for the following problems:
 - no stretched picture or misplaced cursor at resolutions exceeding 2560 pixels wide or 1920 pixels high
 - no blurred picture on screens scaled above 100 %
 - no straight-edged cut-off light from lamps and fires that moves with the camera when using the High Quality engine
+- the frame rate is no longer capped at 60 (120 in 5.x clients) by default; a `g_maxfps` set in `system.cfg` still applies
 </details>
 
 <details>
@@ -53,7 +54,7 @@ The DLL automatically applies fixes for the following problems:
 <summary><b>PrintScreen</b></summary>
 
 - the `Print Screen` key no longer opens the Snipping Tool over the game's own screenshot, and puts that screenshot on the clipboard
-- taking a screenshot no longer freezes the game: the client used to open every screenshot taken before to find a free name, a matter of seconds on a hard disk the first time, and to encode the picture in the frame; it is now encoded and written in the background
+- taking a screenshot no longer freezes the game: the picture is encoded and written in the background
 </details>
 
 <details>
@@ -66,8 +67,6 @@ The DLL automatically applies fixes for the following problems:
 ## Performance
 Loads [DXVK](https://github.com/doitsujin/dxvk) if present, which can improve performance and frame times.
 
-The frame rate is no longer capped at 60 (120 in 5.x clients) by default: without `g_maxfps` in `system.cfg` the client now runs unlimited, and a `g_maxfps` set there still applies.
-
 ## Client mods
 Optional additions to the game client, which can be enabled via `mods.ini`:
 - **Chat time:** displays message times in the chat window, as 5.x clients already support.
@@ -78,13 +77,13 @@ Optional additions to the game client, which can be enabled via `mods.ini`:
 - **Stats:** displays attack, casting and movement speed stats in the character window with as many decimals as they have (up to three).
 - **Quest targets:** displays quest icons in front of the names of monsters that a quest step needs, as 5.x clients already do. On 4.6, gatherable objects also get the green glow later clients show.
 - **DXVK switch:** `[Graphics] DXVK=0` makes the client use the Direct3D 9 of Windows even when a DXVK `d3d9.dll` lies next to it, so the two can be compared without moving files.
-- **Move reports (`[MoveReports]`):** the game server checks skill range, area hits and line of sight along the path the client reports, and the client's reports cut corners by up to a meter or two; the mod reports the character's movement sooner when it strays from the direction it last reported, as when it runs into a wall or along a pillar, or turns, so the game server sees the path around corners and obstacles. There it holds a report back 50 ms instead of 150 and reports after 0.5 m or 15 degrees instead of 1 m or 30, one report per 0.06 s instead of 0.23 s, so the reported path stays within 0.5 m of the real one; running in a straight line is not affected. The values are fixed, `Enabled=0` turns the mod off.
-- **Others' position (`[OthersPosition]`):** puts other characters at the position their move packets report once they lag a quarter of a second of their speed behind it (4.x clients wait for half a second, 3-4 m running, and 5.x clients for a whole second), and corrects their height in the air too, so one the client let fall off a ledge comes back up. This changes only what you see, so that you aim at where the server has them. The values are fixed, `Enabled=0` turns it off.
+- **Move reports (`[MoveReports]`):** the game server checks skill range, area hits and line of sight along the path the client reports, and the client's reports cut corners by up to a meter or two. The mod reports the character's movement sooner when it strays from the last reported direction (a wall, a pillar, a turn), so the reported path stays within 0.5 m of the real one; running straight is not affected. Off by default, `Enabled=1` turns it on.
+- **Others' position (`[OthersPosition]`):** puts other characters at the position their move packets report once they lag a quarter of a second behind it (the client waits half a second, 5.x a whole one), in the air too, so you aim at where the server has them. It changes only what you see. Off by default, `Enabled=1` turns it on.
 - **Multi client:** allows running more than two clients simultaneously.
 - **Skip agreement:** skips the user agreement on login.
 - **Quick destroy:** asks the usual yes-or-no question for the items that otherwise want a word typed before them.
-- **Faster loading (`[Performance] LoadingMode`):** speeds up client start and exit. In 4.x clients it also loads the item, skill, NPC and other large tables from dumps the client keeps in `Data/Dump` (about 200 MB), as 5.x clients do by themselves: from the second start the login screen comes 3 seconds sooner on 4.8 and twice as fast on 4.6. The client has this as an unused developer switch; the dumps are written anew when a `.pak` file of the game data changes (the client itself only compares file sizes) or the client did not quit normally.
-- **Animation level of detail:** animates characters farther than `[Performance] AnimationLod` meters from the camera every second frame, farther than twice that every fourth, and those off the screen or beyond about 35 m every eighth. CryAnimation has the last part behind `ca_SkipBoneAnim`, off by default; the skinning, which costs the most in a crowd, is only redone after a pose update, so it thins out with it. With 300 monsters around the character (4.8, 4K) the frame went from 13.5 to 10.5 ms at 10 m and to 9.6 ms at 6 m in Pandaemonium, and from 9.8 to 7.6 ms at 10 m in Altgard. Found in 4.6, 4.8, 4.9, 5.6 and 5.8.
+- **Faster loading (`[Performance] LoadingMode`):** speeds up client start and exit. 4.x clients also load the large tables (items, skills, NPCs) from dumps kept in `Data/Dump` (about 200 MB), as 5.x clients do by themselves; they are written anew when a `.pak` file of the game data changes or the client did not quit normally.
+- **Animation level of detail (`[Performance] AnimationLod`):** animates characters farther than this many meters from the camera every second frame, twice as far every fourth, and those off the screen or beyond about 35 m every eighth, with their skinning; a crowd costs noticeably less.
 - **UI scale (5.x):** different settings to resolve UI scaling issues at high resolutions.
 - **Plain system.cfg:** reads and saves `system.cfg` in plain text, so it can be edited. A client without the mod ignores the settings of such a file and starts with its defaults.
 
