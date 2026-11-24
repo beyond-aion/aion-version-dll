@@ -36,8 +36,8 @@
         buff_limit           applied            -                            writes 0/0, hooks 0/0, searches 0, misses 0, ambiguous 0
         stat_precision       applied            Game.dll+3D7064              writes 10/10, hooks 2/2, searches 5, misses 0, ambiguous 0
         quest_targets        not_applicable     -                            writes 0/0, hooks 0/0, searches 2, misses 1, ambiguous 0
-        move_reports         unsupported        -                            writes 0/0, hooks 0/0, searches 4, misses 3, ambiguous 0
-        others_snap          unsupported        -                            writes 0/0, hooks 0/0, searches 3, misses 2, ambiguous 0
+        move_reports         applied            Game.dll+4F9AC               writes 3/3, hooks 0/0, searches 6, misses 3, ambiguous 0
+        others_snap          applied            Game.dll+74EF13              writes 4/4, hooks 1/1, searches 5, misses 2, ambiguous 0
         ui_scale             applied            Game.dll+8D55D0              writes 7/7, hooks 0/0, searches 5, misses 0, ambiguous 0
         multi_client         applied            Game.dll+53BBC0              writes 1/1, hooks 0/0, searches 2, misses 0, ambiguous 0
         skip_agreement       applied            Game.dll+5577C1              writes 1/1, hooks 0/0, searches 2, misses 1, ambiguous 0

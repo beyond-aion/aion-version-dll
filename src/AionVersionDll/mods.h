@@ -47,9 +47,6 @@ extern ModsConfig g_modsConfig;
 /// The idle check, which compares the time since the last input against the idle limit (901652 = STR_MSG_AUTO_DISCONNECTED).
 BYTE* FindIdleCheck(HMODULE module);
 
-/// Whether Game.dll is that of a 5.x client, which added the ui_scale_fix option; for the mods made for 4.x only.
-bool IsClient5x(HMODULE game);
-
 /// Game state shared by several mods, nullptr until Game.dll is loaded and the pattern was found.
 extern volatile int* g_gameState;
 bool IsInWorld();

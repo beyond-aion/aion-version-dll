@@ -18,11 +18,6 @@ BYTE* FindIdleCheck(HMODULE module) {
     return FindPattern(module, "2B 83 ?? ?? 00 00 3B 05 ?? ?? ?? ?? 76 ?? 44 8B CD 45 33 C0 BA 14 C2 0D 00");
 }
 
-bool IsClient5x(HMODULE game) {
-    static const wchar_t OPTION_NAME[] = L"ui_scale_fix";
-    return FindBytes(game, OPTION_NAME, sizeof(OPTION_NAME)) != nullptr;
-}
-
 bool IsInWorld() {
     if (!g_gameState) {
         return false;
@@ -52,11 +47,11 @@ static const Setting SETTINGS[] = {
     { L"Buffs", L"OwnColumns", Setting::Int, &g_modsConfig.ownBuffColumns, 0, 0, 64 },
     { L"Stats", L"Enabled", Setting::Bool, &g_modsConfig.statPrecision, 0 },
     { L"QuestTargets", L"Enabled", Setting::Bool, &g_modsConfig.questTargets, 0 },
-    { L"MoveReports", L"Window", Setting::Int, &g_modsConfig.moveReportWindow, 50, 0, 150 },
-    { L"MoveReports", L"Distance", Setting::Float, &g_modsConfig.moveReportDistance, 0.5f, 0.1f, 1 },
-    { L"MoveReports", L"TurnAngle", Setting::Float, &g_modsConfig.moveReportTurnAngle, 15, 1, 30 },
-    { L"MoveReports", L"OthersSnapTime", Setting::Float, &g_modsConfig.othersSnapTime, 0.25f, 0.1f, 0.5f },
-    { L"MoveReports", L"OthersHeightInAir", Setting::Bool, &g_modsConfig.othersHeightInAir, 1 },
+    { L"MoveReports", L"MergeMs", Setting::Int, &g_modsConfig.moveReportWindow, 50, 0, 150 },
+    { L"MoveReports", L"DriftMeters", Setting::Float, &g_modsConfig.moveReportDistance, 0.5f, 0.1f, 1 },
+    { L"MoveReports", L"TurnDegrees", Setting::Float, &g_modsConfig.moveReportTurnAngle, 15, 1, 30 },
+    { L"OtherCharacters", L"SnapSeconds", Setting::Float, &g_modsConfig.othersSnapTime, 0.25f, 0.1f, 1 },
+    { L"OtherCharacters", L"SnapHeightInAir", Setting::Bool, &g_modsConfig.othersHeightInAir, 1 },
     { L"MultiClient", L"Enabled", Setting::Bool, &g_modsConfig.multiClient, 0 },
     { L"Login", L"SkipAgreement", Setting::Bool, &g_modsConfig.skipAgreement, 0 },
     { L"Destroy", L"SkipTypedConfirm", Setting::Bool, &g_modsConfig.skipTypedConfirm, 0 },
@@ -112,7 +107,8 @@ static const InstallEntry GAME_MODS[] = {
     { "move_reports",
         [] { return Config().moveReportWindow != 150 || Config().moveReportDistance != 1 || Config().moveReportTurnAngle != 30; },
         InstallMoveReports },
-    { "others_snap", [] { return Config().othersSnapTime != 0.5f || Config().othersHeightInAir; }, InstallOthersSnap },
+    // the client's own snap time is 0.5 s in 4.x and 1 s in 5.x, so the mod tells by itself whether it has anything to change
+    { "others_snap", [] { return true; }, InstallOthersSnap },
     { "ui_scale", [] { return Config().uiScaleFit; }, InstallUiScale },
     { "multi_client", [] { return Config().multiClient; }, InstallMultiClient },
     { "skip_agreement", [] { return Config().skipAgreement; }, InstallSkipAgreement },
