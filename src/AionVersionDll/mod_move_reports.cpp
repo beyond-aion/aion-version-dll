@@ -2,6 +2,7 @@
 #include <cmath>
 #include <intrin.h>
 #include <detours/detours.h>
+#include "install_report.h"
 
 /// Memory for values that RIP-relative operands in the client read, which has to lie within 2 GB of the module.
 static float* AllocateNear(HMODULE module, size_t size) {
@@ -114,7 +115,7 @@ void InstallOthersSnap(HMODULE game) {
     }
     if (g_modsConfig.othersSnapTime != 0.5f && s_moveSnapReturns.size() == 3) {
         s_snapScale = g_modsConfig.othersSnapTime / 0.5f;
-        DetourAttach(&(PVOID&)real_SnapToServerPos, zzSnapToServerPos);
+        AttachHook(&(PVOID&)real_SnapToServerPos, zzSnapToServerPos);
     }
     ModsLog("others snap: snap at %p, %zu calls from the move handler, %g s, height in the air %d%s", real_SnapToServerPos,
         s_moveSnapReturns.size(), g_modsConfig.othersSnapTime, g_modsConfig.othersHeightInAir, ok ? "" : ", patch failed");

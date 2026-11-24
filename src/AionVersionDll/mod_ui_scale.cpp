@@ -6,18 +6,10 @@ static constexpr int MIN_PERCENT = 70;
 // fonts taller than 32 pixels get the larger glyph cells
 static constexpr int CLIENT_LARGE_GLYPH_FROM = 33;
 
-static void Patch(BYTE* at, const void* value, size_t size) {
-    DWORD oldProtect;
-    if (VirtualProtect(at, size, PAGE_EXECUTE_READWRITE, &oldProtect)) {
-        memcpy(at, value, size);
-        VirtualProtect(at, size, oldProtect, &oldProtect);
-        FlushInstructionCache(GetCurrentProcess(), at, size);
-    }
-}
-
 /// Glyphs are rendered into atlas cells of 32 pixels, or 64 for fonts taller than 32 pixels. With the UI scaled up, fonts
 /// just below that limit get their descenders cut off by the cell, so the larger cells start at a lower height.
 void InstallGlyphCells(HMODULE cryFont) {
+    InstallScope scope("glyph_cells");
     if (g_modsConfig.largeGlyphFrom == CLIENT_LARGE_GLYPH_FROM) {
         return;
     }
@@ -25,6 +17,7 @@ void InstallGlyphCells(HMODULE cryFont) {
     BYTE* p = FindPattern(cryFont, "41 83 7E ?? 20 7E ?? 41 C7 86 ?? ?? 00 00 01 00 00 00");
     if (!p) {
         ModsLog("glyph cells: not needed in this client, only 5.x has the check");
+        ReportStatus(InstallStatus::NotApplicable);
         return;
     }
     BYTE limit = (BYTE)(g_modsConfig.largeGlyphFrom - 1);
@@ -65,6 +58,7 @@ void InstallUiScale(HMODULE game) {
     }
     if (fits.size() != clamps.size()) {
         ModsLog("ui scale: only %zu of the clamps have the screen size at hand, nothing changed", fits.size());
+        ReportStatus(InstallStatus::PatchFailed);
         return;
     }
     for (BYTE* clamp : fits) {
@@ -81,16 +75,16 @@ void InstallUiScale(HMODULE game) {
         // the bytes left over: one long nop
         static const BYTE NOP8[] = { 0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00 };
         memcpy(code + 30, NOP8, sizeof(NOP8));
-        Patch(clamp, code, sizeof(code));
+        PatchMemory(clamp, code, sizeof(code));
     }
 
     INT32 maxPercent = 100;
     float sliderRange = (float)(maxPercent - MIN_PERCENT);
     for (BYTE* slider : sliders) {
-        Patch(slider + 6, &sliderRange, sizeof(sliderRange));
+        PatchMemory(slider + 6, &sliderRange, sizeof(sliderRange));
     }
     if (conversion) {
-        Patch(conversion + 15, &maxPercent, sizeof(maxPercent));
+        PatchMemory(conversion + 15, &maxPercent, sizeof(maxPercent));
     }
 
     // the option table limits every stored value: { name, min, max, ... }
@@ -104,6 +98,6 @@ void InstallUiScale(HMODULE game) {
     BYTE* entry = name ? FindBytes(game, &range, sizeof(range)) : nullptr;
     ModsLog("ui scale: fits the screen at %zu places, option range %p", fits.size(), entry);
     if (entry) {
-        Patch(entry + offsetof(OptionRange, max), &maxPercent, sizeof(maxPercent));
+        PatchMemory(entry + offsetof(OptionRange, max), &maxPercent, sizeof(maxPercent));
     }
 }

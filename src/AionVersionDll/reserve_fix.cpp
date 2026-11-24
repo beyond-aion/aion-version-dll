@@ -1,5 +1,6 @@
 #include "mods_log.h"
 #include <detours/detours.h>
+#include "install_report.h"
 
 // The pool of CrySystem looks its blocks up in a page table that only covers the first 16 GB of the address space, without a bounds check.
 // Some video drivers (the Vulkan driver of AMD) reserve hundreds of gigabytes early, and the system puts such a reservation at the lowest free
@@ -42,9 +43,9 @@ void InstallReserveFix() {
     real_NtAllocateVirtualMemory = (NtAllocateVirtualMemory_t)GetProcAddress(ntdll, "NtAllocateVirtualMemory");
     real_NtAllocateVirtualMemoryEx = (NtAllocateVirtualMemoryEx_t)GetProcAddress(ntdll, "NtAllocateVirtualMemoryEx");
     if (real_NtAllocateVirtualMemory) {
-        DetourAttach(&(PVOID&)real_NtAllocateVirtualMemory, zzNtAllocateVirtualMemory);
+        AttachHook(&(PVOID&)real_NtAllocateVirtualMemory, zzNtAllocateVirtualMemory);
     }
     if (real_NtAllocateVirtualMemoryEx) {
-        DetourAttach(&(PVOID&)real_NtAllocateVirtualMemoryEx, zzNtAllocateVirtualMemoryEx);
+        AttachHook(&(PVOID&)real_NtAllocateVirtualMemoryEx, zzNtAllocateVirtualMemoryEx);
     }
 }

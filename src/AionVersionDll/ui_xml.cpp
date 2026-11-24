@@ -2,6 +2,7 @@
 #include <map>
 #include <string>
 #include <detours/detours.h>
+#include "install_report.h"
 
 /// What the XML loader hands its binary parser: the whole file followed by three zero bytes.
 struct XmlBuffer {
@@ -698,8 +699,8 @@ bool InstallUiXml(HMODULE game) {
     }
     real_LoadXmlFile = (LoadXmlFile_t)loader;
     real_ParseBinaryXml = (ParseBinaryXml_t)parser;
-    DetourAttach(&(PVOID&)real_LoadXmlFile, zzLoadXmlFile);
-    DetourAttach(&(PVOID&)real_ParseBinaryXml, zzParseBinaryXml);
-    DetourAttach(&(PVOID&)real_MultiByteToWideChar, zzMultiByteToWideChar);
+    AttachHook(&(PVOID&)real_LoadXmlFile, zzLoadXmlFile);
+    AttachHook(&(PVOID&)real_ParseBinaryXml, zzParseBinaryXml);
+    AttachHook(&(PVOID&)real_MultiByteToWideChar, zzMultiByteToWideChar);
     return !s_edits.empty();
 }

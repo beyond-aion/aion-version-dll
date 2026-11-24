@@ -19,6 +19,7 @@
 #include <tlhelp32.h>
 #include <shlwapi.h>
 #include <detours/detours.h>
+#include "install_report.h"
 #include <libdeflate.h>
 
 #pragma comment(lib, "bcrypt.lib")
@@ -177,7 +178,7 @@ static void ShortenClockMeasure(HMODULE crySystem) {
                     real_ClockMeasure = (ClockMeasure_t)(base + function->BeginAddress);
                     DetourTransactionBegin();
                     DetourUpdateThread(GetCurrentThread());
-                    DetourAttach(&(PVOID&)real_ClockMeasure, zzClockMeasure);
+                    AttachHook(&(PVOID&)real_ClockMeasure, zzClockMeasure);
                     error = DetourTransactionCommit();
                 }
                 ModsLog("fast start: clock measure at %p, once: %ld", p, error);
@@ -271,8 +272,8 @@ static void HookZlib(HMODULE crySystem) {
     real_uncompress = (Uncompress_t)uncompress;
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
-    DetourAttach(&(PVOID&)real_compress2, zz_compress2);
-    DetourAttach(&(PVOID&)real_uncompress, zz_uncompress);
+    AttachHook(&(PVOID&)real_compress2, zz_compress2);
+    AttachHook(&(PVOID&)real_uncompress, zz_uncompress);
     ModsLog("fast start: zlib at %p and %p: %ld", compress, uncompress, DetourTransactionCommit());
 }
 
@@ -376,10 +377,10 @@ static void HookRawInflate(HMODULE crySystem) {
     DetourUpdateThread(GetCurrentThread());
     if (inflate4) {
         real_RawInflate4 = (RawInflate4_t)inflate4;
-        DetourAttach(&(PVOID&)real_RawInflate4, zzRawInflate4);
+        AttachHook(&(PVOID&)real_RawInflate4, zzRawInflate4);
     } else {
         real_RawInflate5 = (RawInflate5_t)inflate5;
-        DetourAttach(&(PVOID&)real_RawInflate5, zzRawInflate5);
+        AttachHook(&(PVOID&)real_RawInflate5, zzRawInflate5);
     }
     ModsLog("fast start: pak inflate at %p: %ld", inflate4 ? inflate4 : inflate5, DetourTransactionCommit());
 }
@@ -736,6 +737,7 @@ static BYTE* HookBuildFileEntryMap(HMODULE crySystem, BYTE* addFile) {
     if (calls.size() < 6 || calls[0].target != seek || calls[2].target != read || calls[4].target != addFile || calls[3].target != calls[5].target
         || !inAdd(INIT_CHECK, sizeof(INIT_CHECK)) || !inAdd(MAP_CHECK, sizeof(MAP_CHECK))) {
         ModsLog("fast start: pak names at %p do not read as expected", build);
+        ReportStatus(InstallStatus::PatchFailed);
         return nullptr;
     }
     s_factorySeek = (FactorySeek_t)seek;
@@ -743,7 +745,7 @@ static BYTE* HookBuildFileEntryMap(HMODULE crySystem, BYTE* addFile) {
     s_pakAlloc = (PakAlloc_t)calls[1].target;
     s_pakFree = (PakFree_t)calls[3].target;
     real_BuildFileEntryMap = (BuildFileEntryMap_t)build;
-    DetourAttach(&(PVOID&)real_BuildFileEntryMap, zzBuildFileEntryMap);
+    AttachHook(&(PVOID&)real_BuildFileEntryMap, zzBuildFileEntryMap);
     return build;
 }
 
@@ -798,11 +800,11 @@ static void HookPakTree(HMODULE crySystem) {
     real_MakeCache = (MakeCache_t)makeCache;
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
-    DetourAttach(&(PVOID&)real_TreeAdd, zzTreeAdd);
-    DetourAttach(&(PVOID&)real_TreeCount, zzTreeCount);
-    DetourAttach(&(PVOID&)real_TreeSize, zzTreeSize);
-    DetourAttach(&(PVOID&)real_TreeWrite, zzTreeWrite);
-    DetourAttach(&(PVOID&)real_MakeCache, zzMakeCache);
+    AttachHook(&(PVOID&)real_TreeAdd, zzTreeAdd);
+    AttachHook(&(PVOID&)real_TreeCount, zzTreeCount);
+    AttachHook(&(PVOID&)real_TreeSize, zzTreeSize);
+    AttachHook(&(PVOID&)real_TreeWrite, zzTreeWrite);
+    AttachHook(&(PVOID&)real_MakeCache, zzMakeCache);
     BYTE* names = HookBuildFileEntryMap(crySystem, addFile);
     ModsLog("fast start: pak tree at %p, %p, %p, %p (+%x), directory at %p, names at %p: %ld", add, count, size, write, s_pakTreeAt,
         makeCache, names, DetourTransactionCommit());
@@ -853,12 +855,13 @@ static void RestoreImportCallsBeforeUse(HMODULE crySystem) {
         s_crySystem = crySystem;
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
-        DetourAttach(&(PVOID&)real_CreateSystemInterface, zzCreateSystemInterface);
+        AttachHook(&(PVOID&)real_CreateSystemInterface, zzCreateSystemInterface);
         DetourTransactionCommit();
     }
 }
 
 static void OnCrySystem(HMODULE crySystem) {
+    InstallScope scope("fast_start");
     // the runtime is a side-by-side assembly, found by name only while CrySystem loads
     if (HMODULE runtime = GetModuleHandleW(L"MSVCR80.dll")) {
         s_tolower = (Tolower_t)GetProcAddress(runtime, "tolower");
@@ -1241,11 +1244,12 @@ static void HookFieldLookup(HMODULE game) {
         s_gameEnd = (BYTE*)game + ModuleImageSize(game);
         s_fieldIndex = new std::unordered_map<const DWORD*, FieldIndex*>();
         real_SetField = (SetField_t)function;
-        DetourAttach(&(PVOID&)real_SetField, zzSetField);
+        AttachHook(&(PVOID&)real_SetField, zzSetField);
         ModsLog("fast start: field lookup at %p", function);
         return;
     }
     ModsLog("fast start: field lookup not in this client, only 4.x has it");
+    ReportStatus(InstallStatus::NotApplicable);
 }
 
 // 5.x clients write a report of the table heap after loading each table: they walk the whole heap with HeapWalk and print every
@@ -1278,7 +1282,7 @@ static void HookHeapReport(HMODULE game) {
         return;
     }
     real_HeapReport = (HeapReport_t)function;
-    DetourAttach(&(PVOID&)real_HeapReport, zzHeapReport);
+    AttachHook(&(PVOID&)real_HeapReport, zzHeapReport);
     ModsLog("fast start: heap report at %p", function);
 }
 
@@ -1323,10 +1327,11 @@ static void HookMapLowerBound(HMODULE game) {
     BYTE* function = middle ? FunctionStart(middle) : nullptr;
     if (!function) {
         ModsLog("fast start: map lookup not in this client, only 5.x has it");
+        ReportStatus(InstallStatus::NotApplicable);
         return;
     }
     real_LowerBound = (LowerBound_t)function;
-    DetourAttach(&(PVOID&)real_LowerBound, zzLowerBound);
+    AttachHook(&(PVOID&)real_LowerBound, zzLowerBound);
     ModsLog("fast start: map lookup at %p", function);
 }
 
@@ -1345,19 +1350,19 @@ static void HookRuntime() {
     }
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
-    DetourAttach(&(PVOID&)real_wcsicmp, zz_wcsicmp);
-    DetourAttach(&(PVOID&)real_vsnwprintf_s, zz_vsnwprintf_s);
+    AttachHook(&(PVOID&)real_wcsicmp, zz_wcsicmp);
+    AttachHook(&(PVOID&)real_vsnwprintf_s, zz_vsnwprintf_s);
     real_vswprintf = (Vswprintf_t)GetProcAddress(crt, "_vswprintf");
     if (real_vswprintf) {
-        DetourAttach(&(PVOID&)real_vswprintf, zz_vswprintf);
+        AttachHook(&(PVOID&)real_vswprintf, zz_vswprintf);
     }
     real_wcsnicmp = (Wcsnicmp_t)GetProcAddress(crt, "_wcsnicmp");
     if (real_wcsnicmp) {
-        DetourAttach(&(PVOID&)real_wcsnicmp, zz_wcsnicmp);
+        AttachHook(&(PVOID&)real_wcsnicmp, zz_wcsnicmp);
     }
     real_stricmp = (Stricmp_t)GetProcAddress(crt, "_stricmp");
     if (real_stricmp) {
-        DetourAttach(&(PVOID&)real_stricmp, zz_stricmp);
+        AttachHook(&(PVOID&)real_stricmp, zz_stricmp);
     }
     ModsLog("fast start: runtime string functions at %p: %ld", crt, DetourTransactionCommit());
 }
@@ -1395,6 +1400,7 @@ static void HookQuestTokens(HMODULE game) {
     BYTE* p = FindPattern(game, "8B DD 4C 8D 25 ?? ?? ?? ?? 4C 8D 35 ?? ?? ?? ?? 66 66 90 66 66 66 90 49 8B 14 24 49 8B CD FF 15 ?? ?? ?? ?? 85 C0 74 ?? 49 83 C4 08 83 C3 01 4D 3B E6 7C E3");
     if (!p) {
         ModsLog("fast start: quest tokens not in this client, only 4.x has them");
+        ReportStatus(InstallStatus::NotApplicable);
         return;
     }
     const wchar_t** tokens = (const wchar_t**)ResolveRip(p + 5, p + 9);
@@ -1413,7 +1419,7 @@ static void HookQuestTokens(HMODULE game) {
     g_questTokenEnd = (UINT64)end;
     g_questTokenLoop = (UINT64)(p + 23);
     static PVOID patched = p + 2;
-    DetourAttach(&patched, QuestTokenStub);
+    AttachHook(&patched, QuestTokenStub);
     ModsLog("fast start: quest tokens at %p, %d of them", p, (int)(end - tokens));
 }
 
@@ -1444,6 +1450,7 @@ static void HookXmlTokens(HMODULE game) {
     if (!p || memcmp(p, "\x40\x56\x48\x83\xEC\x20\x48\x8B\xF1\x48\x85\xC9", 12) != 0 || memcmp(p + 0x2A, "\x48\x8D\x1D", 3) != 0
         || memcmp(p + 0x31, "\x48\x8D\x2D", 3) != 0) {
         ModsLog("fast start: XML tokens not in this client, only 5.x has them");
+        ReportStatus(InstallStatus::NotApplicable);
         return;
     }
     const wchar_t* const* tokens = (const wchar_t* const*)ResolveRip(p + 0x2D, p + 0x31);
@@ -1460,7 +1467,7 @@ static void HookXmlTokens(HMODULE game) {
     }
     s_xmlTokens = tokens;
     real_XmlToken = (XmlToken_t)p;
-    DetourAttach(&(PVOID&)real_XmlToken, zzXmlToken);
+    AttachHook(&(PVOID&)real_XmlToken, zzXmlToken);
     ModsLog("fast start: XML tokens at %p, %d of them", p, (int)(end - tokens));
 }
 
@@ -1571,10 +1578,10 @@ static void KeepCaches() {
     }
     ModsLog("fast start: another client of this folder runs, keeping its caches");
     KeepShaderCache();
-    DetourAttach(&(PVOID&)real_GetPrivateProfileIntA, zzGetPrivateProfileIntA);
-    DetourAttach(&(PVOID&)real_GetPrivateProfileIntW, zzGetPrivateProfileIntW);
-    DetourAttach(&(PVOID&)real_GetPrivateProfileStringA, zzGetPrivateProfileStringA);
-    DetourAttach(&(PVOID&)real_GetPrivateProfileStringW, zzGetPrivateProfileStringW);
+    AttachHook(&(PVOID&)real_GetPrivateProfileIntA, zzGetPrivateProfileIntA);
+    AttachHook(&(PVOID&)real_GetPrivateProfileIntW, zzGetPrivateProfileIntW);
+    AttachHook(&(PVOID&)real_GetPrivateProfileStringA, zzGetPrivateProfileStringA);
+    AttachHook(&(PVOID&)real_GetPrivateProfileStringW, zzGetPrivateProfileStringW);
 }
 
 // OpenSSL 1.0 seeds its generator on first use with RAND_poll, which on Windows walks every heap block and thread of the process
@@ -1608,10 +1615,11 @@ static bool FindRandPoll(HMODULE libeay) {
 
 /// When the loader loads libeay32.dll later on, outside the transaction of the mods.
 static void HookRandPoll(HMODULE libeay) {
+    InstallScope scope("fast_start");
     if (FindRandPoll(libeay)) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
-        DetourAttach(&(PVOID&)real_RAND_poll, zzRAND_poll);
+        AttachHook(&(PVOID&)real_RAND_poll, zzRAND_poll);
         ModsLog("fast start: RAND_poll hooked: %ld", DetourTransactionCommit());
     }
 }
@@ -1687,10 +1695,11 @@ static bool FindFillVolumeTexture(HMODULE d3dx) {
 
 /// When the loader loads d3dx9_38.dll later on, outside the transaction of the mods.
 static void HookFillVolumeTexture(HMODULE d3dx) {
+    InstallScope scope("fast_start");
     if (FindFillVolumeTexture(d3dx)) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
-        DetourAttach(&(PVOID&)real_FillVolumeTexture, zzFillVolumeTexture);
+        AttachHook(&(PVOID&)real_FillVolumeTexture, zzFillVolumeTexture);
         ModsLog("fast start: D3DXFillVolumeTexture hooked: %ld", DetourTransactionCommit());
     }
 }
@@ -1725,8 +1734,8 @@ static void SkipGuard() {
     }
     s_commandLineA += " -ncg";
     s_commandLineW += L" -ncg";
-    DetourAttach(&(PVOID&)real_GetCommandLineA, zzGetCommandLineA);
-    DetourAttach(&(PVOID&)real_GetCommandLineW, zzGetCommandLineW);
+    AttachHook(&(PVOID&)real_GetCommandLineA, zzGetCommandLineA);
+    AttachHook(&(PVOID&)real_GetCommandLineW, zzGetCommandLineW);
     ModsLog("fast start: -ncg added to the command line");
 }
 
@@ -1784,41 +1793,41 @@ void InstallFastStart() {
     if (!libeay) {
         OnModuleLoad(L"libeay32.dll", HookRandPoll, false);
     } else if (FindRandPoll(libeay)) {
-        DetourAttach(&(PVOID&)real_RAND_poll, zzRAND_poll);
+        AttachHook(&(PVOID&)real_RAND_poll, zzRAND_poll);
         ModsLog("fast start: RAND_poll hooked");
     }
-    DetourAttach(&(PVOID&)real_GetTickCount, zzGetTickCount);
+    AttachHook(&(PVOID&)real_GetTickCount, zzGetTickCount);
     if (!FindUnloadWait(GetModuleHandleW(nullptr))) {
         CloseHandle(CreateThread(nullptr, 0, RetryUnloadWait, nullptr, 0, nullptr));
     }
     HMODULE ole32 = LoadLibraryW(L"ole32.dll");
     real_CoCreateInstance = ole32 ? (decltype(CoCreateInstance)*)GetProcAddress(ole32, "CoCreateInstance") : nullptr;
     if (real_CoCreateInstance) {
-        DetourAttach(&(PVOID&)real_CoCreateInstance, zzCoCreateInstance);
+        AttachHook(&(PVOID&)real_CoCreateInstance, zzCoCreateInstance);
     } else {
         ModsLog("fast start: CoCreateInstance not found");
     }
     HMODULE kernelBase = GetModuleHandleW(L"kernelbase.dll");
     real_RegSetValueExA = kernelBase ? (decltype(RegSetValueExA)*)GetProcAddress(kernelBase, "RegSetValueExA") : nullptr;
     if (real_RegSetValueExA) {
-        DetourAttach(&(PVOID&)real_RegSetValueExA, zzRegSetValueExA);
+        AttachHook(&(PVOID&)real_RegSetValueExA, zzRegSetValueExA);
     }
     OnModuleLoad(L"CrySystem.dll", OnCrySystem, true);
     HMODULE d3dx = GetModuleHandleW(L"d3dx9_38.dll");
     if (!d3dx) {
         OnModuleLoad(L"d3dx9_38.dll", HookFillVolumeTexture, true);
     } else if (FindFillVolumeTexture(d3dx)) {
-        DetourAttach(&(PVOID&)real_FillVolumeTexture, zzFillVolumeTexture);
+        AttachHook(&(PVOID&)real_FillVolumeTexture, zzFillVolumeTexture);
         ModsLog("fast start: D3DXFillVolumeTexture hooked");
     }
     real_ChangeDisplaySettingsA = (decltype(ChangeDisplaySettingsA)*)GetProcAddress(GetModuleHandleW(L"user32.dll"), "ChangeDisplaySettingsA");
     if (real_ChangeDisplaySettingsA) {
-        DetourAttach(&(PVOID&)real_ChangeDisplaySettingsA, zzChangeDisplaySettingsA);
+        AttachHook(&(PVOID&)real_ChangeDisplaySettingsA, zzChangeDisplaySettingsA);
     }
     HMODULE runtime = GetModuleHandleW(L"MSVCR120.dll");
     real_fopen_s = runtime ? (FopenS_t)GetProcAddress(runtime, "fopen_s") : nullptr;
     if (real_fopen_s) {
-        DetourAttach(&(PVOID&)real_fopen_s, zz_fopen_s);
+        AttachHook(&(PVOID&)real_fopen_s, zz_fopen_s);
     }
 }
 

@@ -1,5 +1,6 @@
 #include "code_patch.h"
 #include "module_load.h"
+#include "install_report.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -50,7 +51,7 @@ static void ForEachByte(HMODULE module, size_t length, size_t anchor, BYTE value
     }
 }
 
-std::vector<BYTE*> FindAllPatterns(HMODULE module, const char* pattern) {
+static std::vector<BYTE*> MatchPattern(HMODULE module, const char* pattern) {
     std::vector<BYTE> bytes;
     std::vector<char> fixed;
     for (const char* p = pattern; *p;) {
@@ -84,8 +85,21 @@ std::vector<BYTE*> FindAllPatterns(HMODULE module, const char* pattern) {
     return found;
 }
 
-BYTE* FindPattern(HMODULE module, const char* pattern) {
-    std::vector<BYTE*> found = FindAllPatterns(module, pattern);
+std::vector<BYTE*> FindAllPatterns(HMODULE module, const char* pattern) {
+    std::vector<BYTE*> found = MatchPattern(module, pattern);
+    ReportSearch(found.empty() ? 0 : 1);
+    return found;
+}
+
+BYTE* FindPattern(HMODULE module, const char* pattern, size_t* count) {
+    std::vector<BYTE*> found = MatchPattern(module, pattern);
+    ReportSearch(found.size());
+    if (count) {
+        *count = found.size();
+    }
+    if (found.size() > 1) {
+        MODULE_LOG("pattern ambiguous (%zu matches): %.60s", found.size(), pattern);
+    }
     return found.size() == 1 ? found[0] : nullptr;
 }
 
@@ -103,6 +117,7 @@ BYTE* FindBytes(HMODULE module, const void* bytes, size_t length) {
         }
         return result != nullptr;
     });
+    ReportSearch(result ? 1 : 0);
     return result;
 }
 
@@ -123,6 +138,7 @@ BYTE* FindRipReference(HMODULE module, const char* opcode, int length, const voi
         }
         return result != nullptr;
     });
+    ReportSearch(result ? 1 : 0);
     return result;
 }
 
@@ -134,6 +150,7 @@ BYTE* FindLeaTo(HMODULE module, const void* target) {
         }
         return result != nullptr;
     });
+    ReportSearch(result ? 1 : 0);
     return result;
 }
 
@@ -145,6 +162,7 @@ std::vector<BYTE*> FindAllLeasTo(HMODULE module, const void* target) {
         }
         return false;
     });
+    ReportSearch(found.empty() ? 0 : 1);
     return found;
 }
 
@@ -156,6 +174,7 @@ BYTE* FindCallTo(HMODULE module, const void* target) {
         }
         return result != nullptr;
     });
+    ReportSearch(result ? 1 : 0);
     return result;
 }
 
@@ -167,6 +186,7 @@ std::vector<BYTE*> FindAllCallsTo(HMODULE module, const void* target) {
         }
         return false;
     });
+    ReportSearch(found.empty() ? 0 : 1);
     return found;
 }
 
@@ -204,10 +224,12 @@ bool PatchMemory(void* at, const void* value, size_t size) {
     DWORD oldProtect;
     // code and data share one section in some clients
     if (!VirtualProtect(at, size, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        ReportWrite(at, false);
         return false;
     }
     memcpy(at, value, size);
     VirtualProtect(at, size, oldProtect, &oldProtect);
     FlushInstructionCache(GetCurrentProcess(), at, size);
+    ReportWrite(at, true);
     return true;
 }

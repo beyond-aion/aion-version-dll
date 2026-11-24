@@ -1,6 +1,7 @@
 #include "mods.h"
 #include "module_load.h"
 #include <detours/detours.h>
+#include "install_report.h"
 #include <mimalloc.h>
 
 // The clients allocate through two allocators of CrySystem, both slow on a busy thread: the pool behind CryMalloc, whose locks run in
@@ -147,16 +148,16 @@ static void HookAllocators(HMODULE crySystem, bool beforeEntry) {
     }
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
-    DetourAttach(&(PVOID&)real_CryMalloc, zzCryMalloc);
-    DetourAttach(&(PVOID&)real_CryFree, zzCryFree);
-    DetourAttach(&(PVOID&)real_CryRealloc, zzCryRealloc);
-    DetourAttach(&(PVOID&)real_CryReallocSize, zzCryReallocSize);
-    DetourAttach(&(PVOID&)real_CryFreeSize, zzCryFreeSize);
-    DetourAttach(&(PVOID&)real_CryCalloc, zzCryCalloc);
-    DetourAttach(&(PVOID&)real_PoolAlloc, zzPoolAlloc);
-    DetourAttach(&(PVOID&)real_PoolFree, zzPoolFree);
-    DetourAttach(&(PVOID&)real_ThreadAlloc, zzThreadAlloc);
-    DetourAttach(&(PVOID&)real_ThreadFree, zzThreadFree);
+    AttachHook(&(PVOID&)real_CryMalloc, zzCryMalloc);
+    AttachHook(&(PVOID&)real_CryFree, zzCryFree);
+    AttachHook(&(PVOID&)real_CryRealloc, zzCryRealloc);
+    AttachHook(&(PVOID&)real_CryReallocSize, zzCryReallocSize);
+    AttachHook(&(PVOID&)real_CryFreeSize, zzCryFreeSize);
+    AttachHook(&(PVOID&)real_CryCalloc, zzCryCalloc);
+    AttachHook(&(PVOID&)real_PoolAlloc, zzPoolAlloc);
+    AttachHook(&(PVOID&)real_PoolFree, zzPoolFree);
+    AttachHook(&(PVOID&)real_ThreadAlloc, zzThreadAlloc);
+    AttachHook(&(PVOID&)real_ThreadFree, zzThreadFree);
     LONG error = DetourTransactionCommit();
     // The pool sets up its own growable heap with 296 MB committed at once, when CrySystem starts and in CryFlushAll: lea rcx, pool;
     // xor r8d, r8d; mov edx, size; call init. It keeps only its own records there now, so it starts with 1 MB; hooked too late for that,
@@ -178,10 +179,12 @@ static void HookAllocators(HMODULE crySystem, bool beforeEntry) {
 }
 
 static void HookBeforeEntry(HMODULE crySystem) {
+    InstallScope scope("mimalloc");
     HookAllocators(crySystem, true);
 }
 
 static void HookAfterEntry(HMODULE crySystem) {
+    InstallScope scope("mimalloc");
     if (s_hookedEarly[0]) {
         int lost = 0;
         for (BYTE* target : s_hookedEarly) {

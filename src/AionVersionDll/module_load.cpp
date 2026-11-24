@@ -1,3 +1,4 @@
+#include "install_report.h"
 #include "module_load.h"
 #include <intrin.h>
 #include <stdlib.h>
@@ -113,6 +114,7 @@ void OnModuleLoad(const wchar_t* name, void (*install)(HMODULE module), bool aft
         return;
     }
     s_watches[s_watchCount++] = { name, install, afterEntryPoint, nullptr };
+    ReportWaiting();
     if (s_ldrCookie) {
         return;
     }

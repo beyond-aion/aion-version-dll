@@ -1,6 +1,7 @@
 #include "mods_log.h"
 #include <stdio.h>
 #include <detours/detours.h>
+#include "install_report.h"
 
 // The client writes its own crash report next to aion.bin, which fails where the game folder is not writable (Program Files). So the crash
 // goes to version.log first: the faulting address and the frames as module+offset, the registers and the code addresses on the stack.
@@ -111,5 +112,5 @@ void InstallCrashLog() {
         return;
     }
     s_clientFilter = real_SetUnhandledExceptionFilter(CrashFilter);
-    DetourAttach(&(PVOID&)real_SetUnhandledExceptionFilter, zzSetUnhandledExceptionFilter);
+    AttachHook(&(PVOID&)real_SetUnhandledExceptionFilter, zzSetUnhandledExceptionFilter);
 }

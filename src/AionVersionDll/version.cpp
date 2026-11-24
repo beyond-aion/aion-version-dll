@@ -1,6 +1,7 @@
 #include "exports.h"
 #include "module_load.h"
 #include "mods_log.h"
+#include "install_report.h"
 #include <stdio.h>
 #include <detours/detours.h>
 #if defined(_M_AMD64)
@@ -31,6 +32,7 @@ static void EnableHighQualityGraphicsOptions() {
         DWORD* d = (DWORD*)c;
         if (*d == 1920 * 1200) {
             *d = 4096 * 4096;
+            ReportWrite(d, true);
             char* e = c - 0x100;
             char* e_end = c + 0x100;
             e_end = min(end, e_end);
@@ -38,6 +40,7 @@ static void EnableHighQualityGraphicsOptions() {
                 DWORD* d2 = (DWORD*)e;
                 if (*d2 == 2560 * 1600) {
                     *d2 = 4096 * 4096;
+                    ReportWrite(d2, true);
                     break;
                 }
             }
@@ -55,6 +58,13 @@ void InstallShaderFix();
 void Install64BitStackFix();
 void InstallFullscreenFix();
 void InstallChatLogFix();
+/// Installs one fix in a scope of its own, for the summary in version.log.
+template <typename... Args>
+static void Install(const char* id, void (*install)(Args...), Args... args) {
+    InstallScope scope(id);
+    install(args...);
+}
+
 #if defined(_M_AMD64)
 void InstallCrashLog();
 void InstallReserveFix();
@@ -65,19 +75,21 @@ void InstallLightRectFixOnLoad();
 
 /// The fixes of Game.dll, once its entry point has run.
 static void InstallGameFixes(HMODULE game) {
-    InstallColorTagFix(game);
-    InstallServerCheckFix(game);
-    InstallPetDecorationFix(game);
+    InstallScope scope("Game.dll fixes", true);
+    LogClientBuild(game, "Game.dll");
+    Install("color_tag_fix", InstallColorTagFix, game);
+    Install("server_check_fix", InstallServerCheckFix, game);
+    Install("pet_decoration_fix", InstallPetDecorationFix, game);
 }
 #endif
 
 static decltype(SetWindowLongA)* real_SetWindowLongA = SetWindowLongA;
 static LONG WINAPI zzSetWindowLongA(_In_ HWND hWnd, _In_ int nIndex, _In_ LONG dwNewLong) {
     if (!s_gfxEnabled) {
-        EnableHighQualityGraphicsOptions();
+        Install("graphics_options", EnableHighQualityGraphicsOptions);
         s_gfxEnabled = true;
     }
-    InstallOrUpdateCameraFix(hWnd);
+    Install("camera_fix", InstallOrUpdateCameraFix, hWnd);
     return real_SetWindowLongA(hWnd, nIndex, dwNewLong);
 }
 
@@ -88,7 +100,7 @@ static void PreloadDXVK() {
 
 static void InstallGraphicsOptionsFixAndCameraFix() {
     // enable disabled graphics settings on high resolutions and install camera fix
-    DetourAttach(&(PVOID&)real_SetWindowLongA, zzSetWindowLongA);
+    AttachHook(&(PVOID&)real_SetWindowLongA, zzSetWindowLongA);
 }
 
 static void FixClientStartupWithHighCoreCountCpus() {
@@ -98,6 +110,9 @@ static void FixClientStartupWithHighCoreCountCpus() {
         int maxCpu = min(64, info.dwNumberOfProcessors) - 1;
         DWORD_PTR mask = (1ULL << maxCpu) - 1;
         SetProcessAffinityMask(GetCurrentProcess(), mask);
+        ReportStatus(InstallStatus::Applied);
+    } else {
+        ReportStatus(InstallStatus::NotApplicable);
     }
 }
 
@@ -105,28 +120,38 @@ static void FixClientStartupWithHighCoreCountCpus() {
 /// ones of the fixes run before those of the mods.
 static void InstallPatch(HINSTANCE self) {
     OpenModsLog(self);
-    PreloadDXVK();
+    LogClientBuild(GetModuleHandleW(nullptr), "aion.bin");
+    {
+        InstallScope scope("process start", true);
+        PreloadDXVK();
 
-    DetourTransactionBegin();
-    DetourUpdateThread(GetCurrentThread());
-    InstallIpFix();
-    InstallXigncodeFix();
-    InstallGraphicsOptionsFixAndCameraFix();
-    InstallShaderFix();
-    InstallFullscreenFix();
-    InstallChatLogFix();
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        Install("ip_fix", InstallIpFix);
+        Install("xigncode_fix", InstallXigncodeFix);
+        Install("camera_fix", InstallGraphicsOptionsFixAndCameraFix);
+        Install("shader_fix", InstallShaderFix);
+        Install("fullscreen_fix", InstallFullscreenFix);
+        Install("chat_log_fix", InstallChatLogFix);
 #if defined(_M_AMD64)
-    Install64BitStackFix();
-    InstallCrashLog();
-    InstallReserveFix();
-    InstallLightRectFixOnLoad();
-    OnModuleLoad(L"Game.dll", InstallGameFixes, true);
-    InstallMods();
+        Install("stack_fix", Install64BitStackFix);
+        Install("crash_log", InstallCrashLog);
+        Install("reserve_fix", InstallReserveFix);
+        Install("light_rect_fix", InstallLightRectFixOnLoad);
+        OnModuleLoad(L"Game.dll", InstallGameFixes, true);
+        InstallMods();
 #endif
-    LONG error = DetourTransactionCommit();
-    ModsLog("fixes committed: %ld", error);
+        LONG error = DetourTransactionCommit();
+        ModsLog("fixes committed: %ld", error);
 
-    FixClientStartupWithHighCoreCountCpus();
+        Install("affinity_fix", FixClientStartupWithHighCoreCountCpus);
+    }
+#if defined(_M_AMD64)
+    LogInstallSummary("at the start", false);
+#else
+    // the 32-bit build has no mods, and so no summary with Game.dll
+    LogInstallSummary("at the start", true);
+#endif
 }
 
 BOOL WINAPI DllMain(_In_ HINSTANCE hinstDLL, _In_ DWORD fdwReason, _In_ LPVOID lpvReserved) {

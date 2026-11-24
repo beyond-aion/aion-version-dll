@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string>
 #include <detours/detours.h>
+#include "install_report.h"
 
 // The client writes each line of Chat.log in the code page of the current keyboard layout, so letters the layout's code page lacks
 // turn into question marks, and cuts it at 255 bytes. Its writer is replaced: it checks the g_chatlog console variable the way the
@@ -199,6 +200,7 @@ static void ReadWriter(BYTE* writer, BYTE* end) {
 
 /// The writer formats the line with the Chat.log format, and before it asks for the variable.
 static void InstallWriter(HMODULE game) {
+    InstallScope scope("chat_log_fix");
     s_cvarName = (const char*)FindString(game, "g_chatlog", 10);
     BYTE* format = FindString(game, LINE_FORMAT, sizeof(LINE_FORMAT));
     BYTE* reference = format ? FindReference(game, format) : nullptr;
@@ -213,11 +215,11 @@ static void InstallWriter(HMODULE game) {
     real_ChatLogWrite = (ChatLogWrite_t)writer;
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
-    DetourAttach(&(PVOID&)real_ChatLogWrite, zzChatLogWrite);
+    AttachHook(&(PVOID&)real_ChatLogWrite, zzChatLogWrite);
     DetourTransactionCommit();
 }
 
 void InstallChatLogFix() {
-    DetourAttach(&(PVOID&)real_DeleteFileA, zzDeleteFileA);
+    AttachHook(&(PVOID&)real_DeleteFileA, zzDeleteFileA);
     OnModuleLoad(L"Game.dll", InstallWriter, true);
 }

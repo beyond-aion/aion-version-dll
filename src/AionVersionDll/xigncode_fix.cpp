@@ -2,6 +2,7 @@
 #include <string.h>
 #include <windows.h>
 #include <detours/detours.h>
+#include "install_report.h"
 #include "module_load.h"
 
 static decltype(LoadLibraryW)* real_LoadLibraryW = LoadLibraryW;
@@ -40,6 +41,6 @@ static int WINAPI zzMessageBoxW(_In_opt_ HWND hWnd, _In_opt_ LPCWSTR lpText, _In
 
 /// Lets 5.x clients start without xigncode
 void InstallXigncodeFix() {
-    DetourAttach(&(PVOID&)real_LoadLibraryW, zzLoadLibraryW);
-    DetourAttach(&(PVOID&)real_MessageBoxW, zzMessageBoxW);
+    AttachHook(&(PVOID&)real_LoadLibraryW, zzLoadLibraryW);
+    AttachHook(&(PVOID&)real_MessageBoxW, zzMessageBoxW);
 }

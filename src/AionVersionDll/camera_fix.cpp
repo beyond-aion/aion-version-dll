@@ -3,6 +3,7 @@
 #include <intrin.h>
 #include <psapi.h>
 #include <detours/detours.h>
+#include "install_report.h"
 #include "module_load.h"
 
 #pragma warning(disable: 28159)
@@ -338,12 +339,12 @@ void InstallOrUpdateCameraFix(HWND hWnd) {
     if (real_SetCursorPos == SetCursorPos) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
-        DetourAttach(&(PVOID&)real_SetCursorPos, zzSetCursorPos);
-        DetourAttach(&(PVOID&)real_GetCursorPos, zzGetCursorPos);
-        DetourAttach(&(PVOID&)real_PeekMessageA, zzPeekMessageA);
-        DetourAttach(&(PVOID&)real_ReleaseCapture, zzReleaseCapture);
-        DetourAttach(&(PVOID&)real_GetAsyncKeyState, zzGetAsyncKeyState);
-        DetourAttach(&(PVOID&)real_GetKeyboardState, zzGetKeyboardState);
+        AttachHook(&(PVOID&)real_SetCursorPos, zzSetCursorPos);
+        AttachHook(&(PVOID&)real_GetCursorPos, zzGetCursorPos);
+        AttachHook(&(PVOID&)real_PeekMessageA, zzPeekMessageA);
+        AttachHook(&(PVOID&)real_ReleaseCapture, zzReleaseCapture);
+        AttachHook(&(PVOID&)real_GetAsyncKeyState, zzGetAsyncKeyState);
+        AttachHook(&(PVOID&)real_GetKeyboardState, zzGetKeyboardState);
         LONG error = DetourTransactionCommit();
         MODULE_LOG("camera fix: hooks %s (%ld)", error ? "failed" : "installed", error);
     }

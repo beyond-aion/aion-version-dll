@@ -5,6 +5,7 @@
 #include <shlwapi.h>
 #pragma comment(lib, "Shlwapi.lib")
 #include <detours/detours.h>
+#include "install_report.h"
 #include "module_load.h"
 
 typedef HRESULT(WINAPI* PFN_D3DXCompileShader)(LPCSTR, UINT, const void*, void*, LPCSTR, LPCSTR, DWORD, void**, void**, void**);
@@ -86,7 +87,7 @@ void InstallShaderFix() {
     if (hD3dx9) {
         bool cleared = SetupShaderCache();
         real_D3DXCompileShader = (PFN_D3DXCompileShader)GetProcAddress(hD3dx9, "D3DXCompileShader");
-        DetourAttach(&(PVOID&)real_D3DXCompileShader, zzD3DXCompileShader);
+        AttachHook(&(PVOID&)real_D3DXCompileShader, zzD3DXCompileShader);
         MODULE_LOG("shader fix: D3DXCompileShader=%p, shader cache %s", real_D3DXCompileShader, cleared ? "cleared" : "kept");
     } else {
         MODULE_LOG("shader fix: d3dx9_38.dll not found (error %lu)", GetLastError());

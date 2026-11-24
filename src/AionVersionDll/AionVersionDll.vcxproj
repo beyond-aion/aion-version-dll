@@ -241,6 +241,7 @@
     </ClCompile>
     <ClCompile Include="exports.cpp" />
     <ClCompile Include="fullscreen_fix.cpp" />
+    <ClCompile Include="install_report.cpp" />
     <ClCompile Include="import_calls.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
@@ -371,6 +372,7 @@
   <ItemGroup>
     <ClInclude Include="code_patch.h" />
     <ClInclude Include="exports.h" />
+    <ClInclude Include="install_report.h" />
     <ClInclude Include="chat_log_fix.h" />
     <ClInclude Include="module_load.h" />
     <ClInclude Include="mods.h" />

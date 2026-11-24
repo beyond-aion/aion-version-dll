@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <vector>
 #include <detours/detours.h>
+#include "install_report.h"
 
 // First entry of the table of graphic characters for quest icons (givable, working, finished per quest kind).
 static const char FIRST_QUEST_ICON[] = "quest_givable";
@@ -277,7 +278,7 @@ static void InstallQuestTargetEffect(HMODULE game) {
     s_effectsOffset = *(INT32*)(lookup + 14);
     s_findEffect = (FindEffect_t)ResolveRip(lookup + 23, lookup + 27);
     real_SetQuestMarker = (SetQuestMarker_t)function;
-    DetourAttach(&(PVOID&)real_SetQuestMarker, zzSetQuestMarker);
+    AttachHook(&(PVOID&)real_SetQuestMarker, zzSetQuestMarker);
 }
 
 /// The function holding an instruction that loads the given address through a RIP-relative mov or lea.
@@ -435,5 +436,5 @@ void InstallQuestTargets(HMODULE game) {
     }
     g_questIconLines = *(INT32*)(join - 9);
     g_questIconResume = join + 8;
-    DetourAttach(&g_questIconResume, stub);
+    AttachHook(&g_questIconResume, stub);
 }

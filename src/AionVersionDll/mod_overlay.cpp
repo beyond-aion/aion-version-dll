@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <vector>
 #include <detours/detours.h>
+#include "install_report.h"
 #include "dxvk_hud_font.h"
 #include <math.h>
 
@@ -524,7 +525,7 @@ static IDirect3D9* WINAPI zzDirect3DCreate9(UINT sdkVersion) {
         real_CreateDevice = (CreateDevice_t)(*(void***)d3d)[16];
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
-        DetourAttach(&(PVOID&)real_CreateDevice, zzCreateDevice);
+        AttachHook(&(PVOID&)real_CreateDevice, zzCreateDevice);
         LONG error = DetourTransactionCommit();
         ModsLog("overlay: CreateDevice hook committed: %ld", error);
     }
@@ -540,6 +541,6 @@ void InstallOverlay() {
     real_Direct3DCreate9 = d3d9 ? (Direct3DCreate9_t)GetProcAddress(d3d9, "Direct3DCreate9") : nullptr;
     ModsLog("overlay: Direct3DCreate9=%p", real_Direct3DCreate9);
     if (real_Direct3DCreate9) {
-        DetourAttach(&(PVOID&)real_Direct3DCreate9, zzDirect3DCreate9);
+        AttachHook(&(PVOID&)real_Direct3DCreate9, zzDirect3DCreate9);
     }
 }

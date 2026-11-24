@@ -81,65 +81,63 @@ static bool FindGameState(HMODULE game) {
     return false;
 }
 
+/// Installs one mod in a scope of its own when mods.ini turns it on, for the summary in version.log.
+template <typename... Args>
+static void InstallIf(const char* id, bool enabled, void (*install)(Args...), Args... args) {
+    if (!enabled) {
+        ReportStatus(id, InstallStatus::Disabled);
+        return;
+    }
+    InstallScope scope(id);
+    install(args...);
+}
+
 static void InstallGameMods(HMODULE game) {
     if (s_gameModsInstalled) {
         return;
     }
-    FindGameState(game);
-    ModsLog("Game.dll at %p, game state at %p", game, g_gameState);
-    DetourTransactionBegin();
-    DetourUpdateThread(GetCurrentThread());
-    if (g_modsConfig.chatTimeFormat != 0) {
-        InstallChatTime(game);
+    {
+        InstallScope scope("Game.dll mods", true);
+        {
+            InstallScope state("game_state");
+            FindGameState(game);
+        }
+        ModsLog("Game.dll at %p, game state at %p", game, g_gameState);
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        const ModsConfig& cfg = g_modsConfig;
+        InstallIf("chat_time", cfg.chatTimeFormat != 0, InstallChatTime, game);
+        InstallIf("timeouts", true, InstallTimeouts, game);
+        InstallIf("ping", cfg.pingOverlayMode != 0, InstallPing, game);
+        InstallIf("macro_limit", cfg.macroLimit != 0, InstallMacroLimit, game);
+        bool buffs = cfg.targetBuffColumns || cfg.ownBuffColumns;
+        InstallIf("buff_limit", buffs, InstallBuffLimit, game);
+        InstallIf("stat_precision", cfg.statPrecision, InstallStatPrecision, game);
+        InstallIf("quest_targets", cfg.questTargets, InstallQuestTargets, game);
+        InstallIf("move_reports", cfg.moveReportWindow != 150 || cfg.moveReportDistance != 1 || cfg.moveReportTurnAngle != 30, InstallMoveReports,
+            game);
+        InstallIf("others_snap", cfg.othersSnapTime != 0.5f || cfg.othersHeightInAir, InstallOthersSnap, game);
+        InstallIf("ui_scale", cfg.uiScaleFit, InstallUiScale, game);
+        InstallIf("multi_client", cfg.multiClient, InstallMultiClient, game);
+        InstallIf("skip_agreement", cfg.skipAgreement, InstallSkipAgreement, game);
+        InstallIf("quick_destroy", cfg.skipTypedConfirm, InstallQuickDestroy, game);
+        InstallIf("skip_logo", cfg.fastStart == FAST_START_FULL, InstallSkipLogo, game);
+        InstallIf("fast_load", cfg.fastStart != FAST_START_OFF, InstallFastLoad, game);
+        bool uiXml;
+        {
+            InstallScope scope("ui_xml");
+            uiXml = InstallUiXml(game);
+        }
+        if (buffs && !uiXml) {
+            // the larger buff windows are edits of their UI files
+            ReportStatus("buff_limit", InstallStatus::SkippedDependency);
+        }
+        InstallIf("buff_slots", buffs, InstallBuffSlots, game, uiXml);
+        LONG error = DetourTransactionCommit();
+        ModsLog("game hooks committed: %ld", error);
     }
-    InstallTimeouts(game);
-    if (g_modsConfig.pingOverlayMode) {
-        InstallPing(game);
-    }
-    if (g_modsConfig.macroLimit) {
-        InstallMacroLimit(game);
-    }
-    bool buffs = g_modsConfig.targetBuffColumns || g_modsConfig.ownBuffColumns;
-    if (buffs) {
-        InstallBuffLimit(game);
-    }
-    if (g_modsConfig.statPrecision) {
-        InstallStatPrecision(game);
-    }
-    if (g_modsConfig.questTargets) {
-        InstallQuestTargets(game);
-    }
-    if (g_modsConfig.moveReportWindow != 150 || g_modsConfig.moveReportDistance != 1 || g_modsConfig.moveReportTurnAngle != 30) {
-        InstallMoveReports(game);
-    }
-    if (g_modsConfig.othersSnapTime != 0.5f || g_modsConfig.othersHeightInAir) {
-        InstallOthersSnap(game);
-    }
-    if (g_modsConfig.uiScaleFit) {
-        InstallUiScale(game);
-    }
-    if (g_modsConfig.multiClient) {
-        InstallMultiClient(game);
-    }
-    if (g_modsConfig.skipAgreement) {
-        InstallSkipAgreement(game);
-    }
-    if (g_modsConfig.skipTypedConfirm) {
-        InstallQuickDestroy(game);
-    }
-    if (g_modsConfig.fastStart == FAST_START_FULL) {
-        InstallSkipLogo(game);
-    }
-    if (g_modsConfig.fastStart != FAST_START_OFF) {
-        InstallFastLoad(game);
-    }
-    bool uiXml = InstallUiXml(game);
-    if (buffs) {
-        InstallBuffSlots(game, uiXml);
-    }
-    LONG error = DetourTransactionCommit();
-    ModsLog("game hooks committed: %ld", error);
     s_gameModsInstalled = 1;
+    LogInstallSummary("with Game.dll", true);
 }
 
 /// Must be called inside an open Detours transaction.
@@ -149,16 +147,8 @@ void InstallMods() {
         g_modsConfig.noSessionTimeout, g_modsConfig.pingOverlayMode, g_modsConfig.macroLimit, g_modsConfig.statPrecision);
     OnModuleLoad(L"Game.dll", InstallGameMods, true);
     OnModuleLoad(L"CryFont.dll", InstallGlyphCells, false);
-    if (g_modsConfig.fastStart != FAST_START_OFF) {
-        InstallFastStart();
-    }
-    if (g_modsConfig.mimalloc) {
-        InstallMimalloc();
-    }
-    if (g_modsConfig.pingOverlayMode) {
-        InstallOverlay();
-    }
-    if (g_modsConfig.plainSystemCfg) {
-        InstallPlainSystemCfg();
-    }
+    InstallIf("fast_start", g_modsConfig.fastStart != FAST_START_OFF, InstallFastStart);
+    InstallIf("mimalloc", g_modsConfig.mimalloc, InstallMimalloc);
+    InstallIf("overlay", g_modsConfig.pingOverlayMode != 0, InstallOverlay);
+    InstallIf("plain_system_cfg", g_modsConfig.plainSystemCfg, InstallPlainSystemCfg);
 }

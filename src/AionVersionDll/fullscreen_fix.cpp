@@ -1,3 +1,4 @@
+#include "install_report.h"
 #include "module_load.h"
 
 static constexpr DWORD MAX_SIZE = 16384;
@@ -64,21 +65,25 @@ static BYTE* FindBound(HMODULE crySystem, DWORD lower, DWORD upper) {
 
 static void RaiseBound(HMODULE crySystem, const char* name, DWORD lower, DWORD upper) {
     BYTE* bound = FindBound(crySystem, lower, upper);
+    ReportSearch(bound ? 1 : 0);
     if (!bound) {
         MODULE_LOG("fullscreen fix: %s bound not found", name);
         return;
     }
     DWORD oldProtect;
     if (!VirtualProtect(bound, sizeof(MAX_SIZE), PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        ReportWrite(bound, false);
         return;
     }
     *(DWORD*)bound = MAX_SIZE;
     VirtualProtect(bound, sizeof(MAX_SIZE), oldProtect, &oldProtect);
     FlushInstructionCache(GetCurrentProcess(), bound, sizeof(MAX_SIZE));
+    ReportWrite(bound, true);
     MODULE_LOG("fullscreen fix: %s bound at %p, %lu -> %lu", name, bound, upper, MAX_SIZE);
 }
 
 static void RaiseBounds(HMODULE crySystem) {
+    InstallScope scope("fullscreen_fix");
     RaiseBound(crySystem, "width", 800, 2560);
     RaiseBound(crySystem, "height", 600, 1920);
 }

@@ -6,6 +6,7 @@
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
 #include <detours/detours.h>
+#include "install_report.h"
 #include "module_load.h"
 
 static constexpr char officialIp[] = "70.5.0.18";
@@ -85,16 +86,16 @@ static unsigned long WSAAPI zzinet_addr(_In_z_ const char* cp) {
 
 /// Allows connecting to unofficial game servers by spoofing the game server IP as an official one
 void InstallIpFix() {
-    DetourAttach(&(PVOID&)real_inet_ntoa, zzinet_ntoa);
-    DetourAttach(&(PVOID&)real_lstrcpynA, zzlstrcpynA);
-    DetourAttach(&(PVOID&)real_connect, zzconnect);
+    AttachHook(&(PVOID&)real_inet_ntoa, zzinet_ntoa);
+    AttachHook(&(PVOID&)real_lstrcpynA, zzlstrcpynA);
+    AttachHook(&(PVOID&)real_connect, zzconnect);
     HMODULE msvcr120 = GetModuleHandleA("msvcr120.dll");
     if (msvcr120) {
         ReadCommandLineIp();
         real_strtok_s = (strtok_s_t)GetProcAddress(msvcr120, "strtok_s");
         if (real_strtok_s) {
-            DetourAttach(&(PVOID&)real_strtok_s, zzstrtok_s);
-            DetourAttach(&(PVOID&)real_inet_addr, zzinet_addr);
+            AttachHook(&(PVOID&)real_strtok_s, zzstrtok_s);
+            AttachHook(&(PVOID&)real_inet_addr, zzinet_addr);
         }
     }
     MODULE_LOG("ip fix: strtok_s=%p, -ip %s", real_strtok_s, *s_commandLineIp ? s_commandLineIp : "not given");

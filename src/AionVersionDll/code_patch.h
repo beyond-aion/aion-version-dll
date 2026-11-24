@@ -3,11 +3,13 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <vector>
+#include "install_report.h"
 
 // Searching and changing the x64 code of the client's modules, for the fixes and the mods alike.
 
-/// Finds an IDA-style byte pattern ("48 8B ?? 05") in the given module's image, returns nullptr if missing or not unique.
-BYTE* FindPattern(HMODULE module, const char* pattern);
+/// Finds an IDA-style byte pattern ("48 8B ?? 05") in the given module's image, returns nullptr if missing or not unique. count, if given,
+/// gets the number of matches, which tells a pattern gone stale (0) from one grown too loose (2 or more); the latter is logged.
+BYTE* FindPattern(HMODULE module, const char* pattern, size_t* count = nullptr);
 std::vector<BYTE*> FindAllPatterns(HMODULE module, const char* pattern);
 
 /// Finds the first occurrence of exact bytes in the module's image.

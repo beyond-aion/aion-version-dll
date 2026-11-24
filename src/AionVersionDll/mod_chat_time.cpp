@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <wchar.h>
 #include <detours/detours.h>
+#include "install_report.h"
 
 // Message types below 73 are chat channels, which go through a text filter first; 203..205 are GM alerts that also go to the screen
 // center, which gets them without the time; from 206 on they are debug output.
@@ -167,6 +168,7 @@ void InstallChatTime(HMODULE game) {
     static const wchar_t BUILT_IN_TIME[] = L"[color:(%s);%f %f %f] %s";
     if (FindBytes(game, BUILT_IN_TIME, sizeof(BUILT_IN_TIME))) {
         ModsLog("chat time: the client has its own");
+        ReportStatus(InstallStatus::NotApplicable);
         return;
     }
     // the message entry point also shows GM alerts on screen
@@ -182,14 +184,14 @@ void InstallChatTime(HMODULE game) {
         return;
     }
     if (real_ShowAlert) {
-        DetourAttach(&(PVOID&)real_ShowAlert, zzShowAlert);
+        AttachHook(&(PVOID&)real_ShowAlert, zzShowAlert);
     }
-    DetourAttach(&(PVOID&)real_ChatAddMessage, zzChatAddMessage);
+    AttachHook(&(PVOID&)real_ChatAddMessage, zzChatAddMessage);
     if (real_ChatAddChannelMessage) {
-        DetourAttach(&(PVOID&)real_ChatAddChannelMessage, zzChatAddChannelMessage);
+        AttachHook(&(PVOID&)real_ChatAddChannelMessage, zzChatAddChannelMessage);
     }
     SetChatLogFilter(SkipChatTime);
     if (real_FilterChatText) {
-        DetourAttach(&(PVOID&)real_FilterChatText, zzFilterChatText);
+        AttachHook(&(PVOID&)real_FilterChatText, zzFilterChatText);
     }
 }

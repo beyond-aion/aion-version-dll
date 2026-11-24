@@ -2,6 +2,7 @@
 #include <intrin.h>
 #include <stdio.h>
 #include <detours/detours.h>
+#include "install_report.h"
 
 /// The virtual table of a class, found through its RTTI: type descriptor name -> complete object locator -> table.
 static BYTE* FindVtable(HMODULE module, const char* rttiName) {
@@ -204,8 +205,8 @@ static void InstallRowsBelowAssist(HMODULE game, BYTE* targetBuffVtable) {
     s_windowRectAt = 0x68;
     real_SetWindowRect = (SetWindowRect_t)((BYTE**)targetBuffVtable)[slot];
     real_PlaceTargetBuffs = (PlaceWindow_t)placeBuffs;
-    DetourAttach(&(PVOID&)real_SetWindowRect, zzSetWindowRect);
-    DetourAttach(&(PVOID&)real_PlaceTargetBuffs, zzPlaceTargetBuffs);
+    AttachHook(&(PVOID&)real_SetWindowRect, zzSetWindowRect);
+    AttachHook(&(PVOID&)real_PlaceTargetBuffs, zzPlaceTargetBuffs);
 }
 
 /// The own windows get the slots of their kind up to the configured count.
@@ -1155,11 +1156,11 @@ static void InstallBuffCount5(HMODULE game, BYTE* buffVtable, BYTE* debuffVtable
     real_FillSlot = (FillSlot_t)fill;
     real_SlotRect = (SlotRect_t)rect;
     real_HideSlots = (HideSlots_t)hide;
-    DetourAttach(&(PVOID&)real_SelectBuffs5, zzSelectBuffs5);
-    DetourAttach(&(PVOID&)real_SelectDebuffs5, zzSelectDebuffs5);
-    DetourAttach(&(PVOID&)real_FillSlot, zzFillSlot);
-    DetourAttach(&(PVOID&)real_SlotRect, zzSlotRect);
-    DetourAttach(&(PVOID&)real_HideSlots, zzHideSlots);
+    AttachHook(&(PVOID&)real_SelectBuffs5, zzSelectBuffs5);
+    AttachHook(&(PVOID&)real_SelectDebuffs5, zzSelectDebuffs5);
+    AttachHook(&(PVOID&)real_FillSlot, zzFillSlot);
+    AttachHook(&(PVOID&)real_SlotRect, zzSlotRect);
+    AttachHook(&(PVOID&)real_HideSlots, zzHideSlots);
 }
 
 /// Shows up to MAX_EFFECTS buffs and as many debuffs in the own buff and debuff windows and in the target window. Needs the UI
@@ -1221,11 +1222,11 @@ static void InstallBuffCount(HMODULE game, BYTE* targetVtable) {
     Apply(targetPatches);
     real_SelectBuffs = (SelectBuffs_t)buffSelector;
     real_SelectDebuffs = (SelectDebuffs_t)debuffSelector;
-    DetourAttach(&(PVOID&)real_SelectBuffs, zzSelectBuffs);
-    DetourAttach(&(PVOID&)real_SelectDebuffs, zzSelectDebuffs);
+    AttachHook(&(PVOID&)real_SelectBuffs, zzSelectBuffs);
+    AttachHook(&(PVOID&)real_SelectDebuffs, zzSelectDebuffs);
     real_InitWindow = (InitWindow_t)init;
     for (int w = 0; w < s_windowCount; w++) {
-        DetourAttach(&(PVOID&)s_windows[w].realConstruct, CONSTRUCT_HOOKS[w]);
+        AttachHook(&(PVOID&)s_windows[w].realConstruct, CONSTRUCT_HOOKS[w]);
     }
 }
 
@@ -1233,6 +1234,8 @@ void InstallBuffLimit(HMODULE game) {
     AddUiXmlEdit(L"target_buff_status_dialog", EditTargetWindow);
     AddUiXmlEdit(L"buff_status_dialog", EditBuffWindow);
     AddUiXmlEdit(L"debuff_status_dialog", EditDebuffWindow);
+    // the edits apply as the client loads the windows
+    ReportStatus(InstallStatus::Applied);
 }
 
 /// How many slots of each kind the client fills in its buff windows: 40 in 5.x, whose loop ends in cmp reg, 40; jl right after

@@ -1,6 +1,7 @@
 #include "exports.h"
 #include <winternl.h>
 #include <detours/detours.h>
+#include "install_report.h"
 #include "module_load.h"
 
 /* Code from https://github.com/AbdouRoumi/Custom-GetProcAddress */
@@ -180,21 +181,21 @@ zzLoadLibraryA(
 /// Fixes the 64-bit client crashing on startup on Windows 11 version 24H2 or later
 void Install64BitStackFix() {
     /* fix stack on call CloseHandle */
-    DetourAttach(&(PVOID&)real_CloseHandle, zzCloseHandle);
+    AttachHook(&(PVOID&)real_CloseHandle, zzCloseHandle);
 
     /* fix for rbp restore in themida */
     HMODULE hntdll = GetModuleHandleA("ntdll.dll");
     real_RtlAddVectoredExceptionHandler = (TRtlAddVectoredExceptionHandler)GetProcAddress(hntdll, "RtlAddVectoredExceptionHandler");
 
-    DetourAttach(&(PVOID&)real_RtlAddVectoredExceptionHandler, zzRtlAddVectoredExceptionHandler);
+    AttachHook(&(PVOID&)real_RtlAddVectoredExceptionHandler, zzRtlAddVectoredExceptionHandler);
 
     /* fix stack on call. Use custom getprocaddress because standard return it from aclayer */
     HMODULE hkernel32 = GetModuleHandleA("kernel32.dll");
     real_CreateFileA = (decltype(CreateFileA)*)CustomGetProcProcess(hkernel32, "CreateFileA");
 
-    DetourAttach(&(PVOID&)real_CreateFileA, zzCreateFileA);
+    AttachHook(&(PVOID&)real_CreateFileA, zzCreateFileA);
 
     /* same fix*/
-    DetourAttach(&(PVOID&)real_LoadLibraryA, zzLoadLibraryA);
+    AttachHook(&(PVOID&)real_LoadLibraryA, zzLoadLibraryA);
     MODULE_LOG("stack fix: RtlAddVectoredExceptionHandler=%p CreateFileA=%p", real_RtlAddVectoredExceptionHandler, real_CreateFileA);
 }

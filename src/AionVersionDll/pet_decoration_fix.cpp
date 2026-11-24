@@ -75,6 +75,7 @@ void InstallPetDecorationFix(HMODULE game) {
         if (BYTE* block = FindPattern(game, client.pattern)) {
             const char* flag = client.flag(game, block);
             ModsLog("pet decoration %s: at %p, the check reads %s, left as it is", client.version, block, flag ? flag : "an unknown flag");
+            ReportStatus(InstallStatus::NotApplicable);
             return;
         }
     }

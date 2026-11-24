@@ -5,6 +5,7 @@
 #include <set>
 #include <vector>
 #include <detours/detours.h>
+#include "install_report.h"
 
 // The High Quality engine shades each point light in a screen rectangle around it. The renderer takes that rectangle from the two corners
 // of a square of the light's radius facing the camera through the light's center, which is smaller than the light's sphere on screen
@@ -148,6 +149,7 @@ static bool ReadLayout(const BYTE* start, const BYTE* end, const BYTE* check, La
 }
 
 static void InstallLightRectFix(HMODULE renderer) {
+    InstallScope scope("light_rect_fix");
     // the depth test of the first projected corner: comiss xmm7, xmm0; ja fail; movss xmm6, [1.0]; comiss xmm0, xmm6; ja fail
     std::vector<BYTE*> checks = FindAllPatterns(renderer, "0F 2F F8 0F 87 ?? ?? ?? ?? F3 0F 10 35 ?? ?? ?? ?? 0F 2F C6 0F 87");
     // one for the point lights and one for the air light
@@ -168,7 +170,7 @@ static void InstallLightRectFix(HMODULE renderer) {
         }
         s_layout = layout;
         targets[hooked] = function;
-        if (DetourAttach(&targets[hooked], LightRect) == NO_ERROR) {
+        if (AttachHook(&targets[hooked], LightRect) == NO_ERROR) {
             ModsLog("light rect fix: hooked at %p (renderer %X %X %X, light %X %X)", function, layout.width, layout.height, layout.project,
                 layout.position, layout.radius);
             hooked++;

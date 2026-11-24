@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <detours/detours.h>
+#include "install_report.h"
 
 // The client keeps system.cfg in the game root with every byte of a line inverted, apart from the comment lines (--) and the line
 // breaks, and writes the whole file anew whenever it saves the settings.
@@ -117,6 +118,7 @@ static __int64 __fastcall zzSaveConfig(void* system, void* a2, void* a3, void* a
 /// The loader logs "Loading system configuration" and reads a file line by line, inverting each line when told to (system.cfg only).
 /// The saver starts system.cfg with two comment lines, the second of them the attention line, and inverts the settings after them.
 static void InstallOnCrySystem(HMODULE crySystem) {
+    InstallScope scope("plain_system_cfg");
     // the client loads CrySystem.dll once more when it closes
     if (real_LoadConfig) {
         return;
@@ -135,8 +137,8 @@ static void InstallOnCrySystem(HMODULE crySystem) {
     }
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
-    DetourAttach(&(PVOID&)real_LoadConfig, zzLoadConfig);
-    DetourAttach(&(PVOID&)real_SaveConfig, zzSaveConfig);
+    AttachHook(&(PVOID&)real_LoadConfig, zzLoadConfig);
+    AttachHook(&(PVOID&)real_SaveConfig, zzSaveConfig);
     LONG error = DetourTransactionCommit();
     if (error) {
         ModsLog("system cfg: hooks failed: %ld", error);

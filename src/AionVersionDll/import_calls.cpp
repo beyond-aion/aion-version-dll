@@ -282,6 +282,9 @@ void RestoreImportCalls(HMODULE module) {
     }
     VirtualProtect(text, textEnd - text, old, &old);
     FlushInstructionCache(GetCurrentProcess(), text, textEnd - text);
+    if (!patches.empty()) {
+        ReportWrite(patches[0].at, true);
+    }
     QueryPerformanceCounter(&ended);
     ModsLog("fast start: %zu of %zu import calls restored, %zu functions, %.0f ms", patches.size(), sites.size(), used,
         (ended.QuadPart - started.QuadPart) * 1000.0 / frequency.QuadPart);

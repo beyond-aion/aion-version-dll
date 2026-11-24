@@ -2,6 +2,7 @@
 #include "module_load.h"
 #include <math.h>
 #include <detours/detours.h>
+#include "install_report.h"
 
 // The character window fills attack speed with a direct call right after looking up this widget.
 static const char ATTACK_SPEED_WIDGET[] = "atk_delay";
@@ -176,9 +177,9 @@ void InstallStatPrecision(HMODULE game) {
     ModsLog("stat precision: value=%p (%d changes) tooltip=%p (%d changes) attack delay increments=%d", real_SetStatValue, valueChanges,
         real_SetStatTooltip, tooltipChanges, incrementChanges);
     if (valueChanges) {
-        DetourAttach(&(PVOID&)real_SetStatValue, zzSetStatValue);
+        AttachHook(&(PVOID&)real_SetStatValue, zzSetStatValue);
     }
     if (tooltipChanges) {
-        DetourAttach(&(PVOID&)real_SetStatTooltip, zzSetStatTooltip);
+        AttachHook(&(PVOID&)real_SetStatTooltip, zzSetStatTooltip);
     }
 }

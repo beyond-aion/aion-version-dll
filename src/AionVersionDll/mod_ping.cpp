@@ -3,6 +3,7 @@
 #include <winsock2.h>
 #include <atomic>
 #include <detours/detours.h>
+#include "install_report.h"
 
 // A ping that got no answer within this time counts as lost.
 static constexpr ULONGLONG PING_TIMEOUT_MS = 10000;
@@ -272,10 +273,10 @@ void InstallPing(HMODULE game) {
         sendPingRequest = nullptr;
         return;
     }
-    DetourAttach(&(PVOID&)real_OnPingResponse, zzOnPingResponse);
-    DetourAttach(&(PVOID&)real_DispatchPacket, zzDispatchPacket);
-    DetourAttach(&(PVOID&)real_PeekMessageW, zzPeekMessageW);
-    DetourAttach(&(PVOID&)real_PeekMessageA, zzPeekMessageA);
-    DetourAttach(&(PVOID&)real_recv, zzrecv);
-    DetourAttach(&(PVOID&)real_send, zzsend);
+    AttachHook(&(PVOID&)real_OnPingResponse, zzOnPingResponse);
+    AttachHook(&(PVOID&)real_DispatchPacket, zzDispatchPacket);
+    AttachHook(&(PVOID&)real_PeekMessageW, zzPeekMessageW);
+    AttachHook(&(PVOID&)real_PeekMessageA, zzPeekMessageA);
+    AttachHook(&(PVOID&)real_recv, zzrecv);
+    AttachHook(&(PVOID&)real_send, zzsend);
 }
