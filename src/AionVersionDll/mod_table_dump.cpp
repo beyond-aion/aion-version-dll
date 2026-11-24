@@ -182,6 +182,8 @@ DumpMethod_t s_real[MAX_METHODS];
 
 bool s_dumpActive = false;
 volatile bool s_writerSeen = false;
+bool s_trusted = false;     // the dumps of the last run were complete, so NormalStop goes back to true right after the client clears it
+SRWLOCK s_flagLock = SRWLOCK_INIT; // the game thread (writers) and the watch thread both write NormalStop
 bool s_isWriter[MAX_METHODS] = {};
 std::wstring s_flagsIni;   // Data\Dump\TableDump.ini in 4.x, data\dump\config.ini in 5.x
 bool s_digitFlags = false; // 5.x writes 1/0, 4.x writes true/false
@@ -189,12 +191,12 @@ void WriterStarted();
 
 template <int N>
 __int64 __fastcall zzDumpMethod(__int64 table, const char* file) {
+    if (s_isWriter[N]) {
+        WriterStarted(); // before the file is touched, so that a client killed while it writes leaves the dumps marked incomplete
+    }
     HookPak(true);
     __int64 result = s_real[N](table, file);
     HookPak(false);
-    if (s_isWriter[N]) {
-        WriterStarted();
-    }
     ModsLog("table dump: %s %s", file ? file : "?", result ? "done" : "failed");
     return result;
 }
@@ -310,26 +312,51 @@ void WriteNormalStop(bool complete) {
 
 /// A dump writer runs only for a dump that was missing or rejected, so the flag has to stay false until the loop is over.
 void WriterStarted() {
+    AcquireSRWLockExclusive(&s_flagLock);
     s_writerSeen = true;
     if (s_dumpActive) {
         WriteNormalStop(false);
     }
+    ReleaseSRWLockExclusive(&s_flagLock);
+}
+
+/// The table loop is over (the client is at its login screen): the dumps on disk are complete, so a later early exit or crash must not
+/// make the next start rebuild them.
+void MarkDumpsComplete() {
+    AcquireSRWLockExclusive(&s_flagLock);
+    if (!ReadNormalStop()) {
+        WriteNormalStop(true);
+        ModsLog("table dump: the table loop is over, NormalStop=true");
+    }
+    ReleaseSRWLockExclusive(&s_flagLock);
 }
 
 /// The client writes NormalStop=false when it starts and true only on a normal exit, so a client killed early makes the next start
-/// rebuild the dumps even though they were complete. Once the dumps of the last run are known to be complete, put the flag back
-/// right after the client clears it; a writer, should one run after all, takes the flag down again until the loop is over.
+/// rebuild the dumps even though they were complete. When the dumps of the last run were complete, the flag is put back right after the
+/// client clears it; a writer, should one run after all, takes the flag down again until the loop is over. Once the client is at its
+/// login screen (game state 2 in 4.x, 3 in 5.x), the table loop is over and the dumps are complete whatever the last run left.
 DWORD WINAPI NormalStopWatch(LPVOID) {
-    for (int i = 0; i < 300; i++) {
-        if (s_writerSeen) {
-            return 0;
-        }
-        if (!ReadNormalStop()) {
+    for (int i = 0; s_trusted && i < 300 && !s_writerSeen; i++) {
+        AcquireSRWLockExclusive(&s_flagLock);
+        bool cleared = !s_writerSeen && !ReadNormalStop();
+        if (cleared) {
             WriteNormalStop(true);
             ModsLog("table dump: put NormalStop back after the client started, the dumps were complete");
-            return 0;
+        }
+        ReleaseSRWLockExclusive(&s_flagLock);
+        if (cleared) {
+            break;
         }
         Sleep(50);
+    }
+    // a cold start of 5.8 from a slow disk takes over a minute; give up after half an hour
+    for (int i = 0; i < 18000; i++) {
+        int state = g_gameState ? *g_gameState : 0;
+        if (state == 2 || state == 3) {
+            MarkDumpsComplete();
+            return 0;
+        }
+        Sleep(100);
     }
     return 0;
 }
@@ -407,25 +434,16 @@ void Apply(const DumpPlaces& places) {
     }
     bool ok = ApplyPatch(places.flag);
     ModsLog("table dump: flag at %p, ISystem at %p, %zu dump methods%s", places.flag.at, places.system, count, ok ? "" : ", flag not set");
-    if (s_dumpActive && trusted) {
+    if (s_dumpActive) {
+        s_trusted = trusted;
         CreateThread(nullptr, 0, NormalStopWatch, nullptr, 0, nullptr);
-        ModsLog("table dump: the dumps were complete, keeping NormalStop true after the client's start");
+        if (trusted) {
+            ModsLog("table dump: the dumps were complete, keeping NormalStop true after the client's start");
+        }
     }
 }
 
 } // namespace
-
-/// The table loop is over (the client is at its login screen): the dumps on disk are complete, so a later early exit or crash must not
-/// make the next start rebuild them.
-void MarkDumpsComplete() {
-    if (!s_dumpActive) {
-        return;
-    }
-    if (!ReadNormalStop()) {
-        WriteNormalStop(true);
-        ModsLog("table dump: the table loop is over, NormalStop=true");
-    }
-}
 
 void InstallTableDump(HMODULE game) {
     LocateThenApply(game, Locate, Apply);
@@ -449,8 +467,9 @@ void InstallTableDump(HMODULE game) {
         && (dump.nFileSizeHigh > 0 || dump.nFileSizeLow > 0);
     ModsLog("table dump: 5.x tables.dmp, NormalStop=%d ValidTableDump=%d BitSize=%s tables.dmp=%d", normalStop, valid,
         ReadIniValue("BitSize").c_str(), hasDump);
-    if (normalStop && valid && bits && hasDump) {
-        CreateThread(nullptr, 0, NormalStopWatch, nullptr, 0, nullptr);
+    s_trusted = normalStop && valid && bits && hasDump;
+    CreateThread(nullptr, 0, NormalStopWatch, nullptr, 0, nullptr);
+    if (s_trusted) {
         ModsLog("table dump: the 5.x dump was complete, keeping NormalStop=1 after the client's start");
     }
 }

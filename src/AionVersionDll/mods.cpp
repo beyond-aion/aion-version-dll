@@ -27,9 +27,6 @@ bool IsInWorld() {
     if (state != lastLogged) {
         lastLogged = state;
         ModsLog("game state %d", state);
-        if (state == 2 || state == 3) {
-            MarkDumpsComplete();
-        }
     }
     return state == STATE_IN_WORLD;
 }

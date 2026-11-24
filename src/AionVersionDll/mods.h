@@ -55,9 +55,6 @@ BYTE* FindIdleCheck(HMODULE module);
 extern volatile int* g_gameState;
 bool IsInWorld();
 
-/// The table loop is over: mark the dumps on disk complete, so that an early exit does not make the next start rebuild them.
-void MarkDumpsComplete();
-
 /// Must be called inside an open Detours transaction.
 void InstallMods();
 /// [Debug] DumpModules: images of the client's modules for modcheck; added before the fixes and mods, to come before their changes.
