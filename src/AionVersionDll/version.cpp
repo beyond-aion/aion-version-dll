@@ -19,19 +19,42 @@ struct GraphicsLimits {
 
 GraphicsLimits LocateGraphicsLimits(HMODULE crySystem) {
     GraphicsLimits limits;
-    MEMORY_BASIC_INFORMATION mbi = {};
-    if (!crySystem || !VirtualQuery((BYTE*)crySystem + 0x1000, &mbi, sizeof(mbi)) || !(mbi.AllocationProtect & 0xF0)) {
+    if (!crySystem) {
         return limits;
     }
+    BYTE* base = (BYTE*)crySystem;
+    auto nt = (PIMAGE_NT_HEADERS)(base + ((PIMAGE_DOS_HEADER)base)->e_lfanew);
+    const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
+    const IMAGE_SECTION_HEADER* sectionEnd = section + nt->FileHeader.NumberOfSections;
+    size_t imageSize = nt->OptionalHeader.SizeOfImage;
+
+    // Earlier hooks can split the code section into separate VirtualQuery regions.
+    for (; section < sectionEnd; section++) {
+        if ((section->Characteristics & IMAGE_SCN_MEM_EXECUTE) && section->VirtualAddress < imageSize) {
+            break;
+        }
+    }
+    if (section == sectionEnd) {
+        return limits;
+    }
+
+    size_t sectionSize = section->Misc.VirtualSize ? section->Misc.VirtualSize : section->SizeOfRawData;
+    size_t size = min(sectionSize, imageSize - section->VirtualAddress);
+    if (size < sizeof(DWORD)) {
+        return limits;
+    }
+
     static const DWORD RAISED = 4096 * 4096;
-    BYTE* begin = (BYTE*)mbi.BaseAddress;
-    BYTE* end = begin + mbi.RegionSize - sizeof(DWORD);
-    for (BYTE* c = begin; c < end; c++) {
+    BYTE* begin = base + section->VirtualAddress;
+    BYTE* end = begin + size - sizeof(DWORD);
+    for (BYTE* c = begin; c <= end; c++) {
         if (*(DWORD*)c != 1920 * 1200) {
             continue;
         }
         limits.first = PlanPatch(c, &RAISED, sizeof(RAISED));
-        for (BYTE* e = c - 0x100; e < min(end, c + 0x100); e++) {
+        BYTE* nearBegin = c - min(c - begin, 0x100);
+        BYTE* nearEnd = c + min(end - c, 0x100);
+        for (BYTE* e = nearBegin; e <= nearEnd; e++) {
             if (*(DWORD*)e == 2560 * 1600) {
                 limits.second = PlanPatch(e, &RAISED, sizeof(RAISED));
                 break;
@@ -43,6 +66,10 @@ GraphicsLimits LocateGraphicsLimits(HMODULE crySystem) {
 }
 
 void ApplyGraphicsLimits(const GraphicsLimits& limits) {
+    if (!limits.first) {
+        ReportStatus(InstallStatus::NotFound);
+        return;
+    }
     ApplyPatch(limits.first);
     ApplyPatch(limits.second);
 }
