@@ -83,7 +83,7 @@ Optional additions to the game client, which can be enabled via `mods.ini`:
 - **Skip agreement:** skips the user agreement on login.
 - **Quick destroy:** asks the usual yes-or-no question for the items that otherwise want a word typed before them.
 - **Faster loading (`[Performance] LoadingMode`):** speeds up client start and exit. 4.x clients also load the large tables (items, skills, NPCs) from dumps kept in `Data/Dump` (about 200 MB), as 5.x clients do by themselves; they are written anew when a `.pak` file of the game data changes or the client did not quit normally.
-- **Animation level of detail (`[Performance] AnimationLod`):** animates characters farther than this many meters from the camera every second frame, twice as far every fourth, and those off the screen or beyond about 35 m every eighth, with their skinning; a crowd costs noticeably less.
+- **Animation level of detail (`[Performance] AnimationLod`):** animates characters farther than this many meters from your character every second frame, twice as far every fourth, and those off the screen or far from the camera every eighth, with their skinning; your own character and those within that distance of it always every frame, however far the camera is. A crowd costs noticeably less.
 - **UI scale (5.x):** different settings to resolve UI scaling issues at high resolutions.
 - **Plain system.cfg:** reads and saves `system.cfg` in plain text, so it can be edited. A client without the mod ignores the settings of such a file and starts with its defaults.
 

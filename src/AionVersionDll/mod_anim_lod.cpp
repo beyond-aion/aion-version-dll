@@ -5,7 +5,7 @@
 #include "install_report.h"
 #include "mods_log.h"
 
-// [Performance] AnimationLod=N: characters farther than N meters from the camera update their pose every second frame, farther than 2N
+// [Performance] AnimationLod=N: characters farther than N meters from the player's character update their pose every second frame, farther than 2N
 // every fourth, so a crowd costs less. CryAnimation already has such a level of detail, behind ca_SkipBoneAnim, which is off by default:
 // CryCharInstance::Update asks a function for a mask by the character's place and updates the bones only in the frames where the frame
 // number and the mask give the character's own phase (a counter given out as characters are made, so they take turns), and in any case
@@ -30,20 +30,32 @@ const float* Camera() {
     return engine ? (*(const float* (**)(void*))(*(BYTE**)engine + s_cameraMethod))(engine) : nullptr;
 }
 
+/// Squared distance from the point the camera looks at, the player's own character (its place 1.75 m above the feet in 4.8), or from the
+/// camera when that point is not sane. The camera keeps 10 to 20 m behind the character, so counted from it the own character and the
+/// monsters it fights stepped down to every second or fourth frame, and the own character's run turned jerky (4.8, 24.11).
+float DistanceFromPlayer2(const float* camera, const float* position) {
+    float tx = camera[12] - camera[0], ty = camera[13] - camera[1], tz = camera[14] - camera[2];
+    const float* from = tx * tx + ty * ty + tz * tz < 100 * 100 ? camera : camera + 12;
+    float dx = position[0] - from[0], dy = position[1] - from[1], dz = position[2] - from[2];
+    return dx * dx + dy * dy + dz * dz;
+}
+
 int AnimationMask(void* instance, const float* position, float radius) {
+    const float* camera = Camera();
+    float distance2 = camera ? DistanceFromPlayer2(camera, position) : 0;
+    // the own character (and what stands in it, as its mount) and everyone within AnimationLod meters of it every frame, whatever the
+    // engine's mask says: that one counts from the camera (beyond 32 m of it every eighth frame), so a camera pulled far back stepped down
+    // the characters next to the player too
+    if (camera && (distance2 < 3 * 3 || distance2 < s_near2)) {
+        return 0;
+    }
     int mask = real_Mask(instance, position, radius);
     if (mask != 0) {
         return 7;
     }
-    if (!(radius > 0)) {
+    if (!(radius > 0) || !camera) {
         return 0;
     }
-    const float* camera = Camera();
-    if (!camera) {
-        return 0;
-    }
-    float dx = position[0] - camera[12], dy = position[1] - camera[13], dz = position[2] - camera[14];
-    float distance2 = dx * dx + dy * dy + dz * dz;
     return distance2 < s_near2 ? 0 : distance2 < s_far2 ? 1 : 3;
 }
 
