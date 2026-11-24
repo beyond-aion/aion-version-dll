@@ -14,7 +14,7 @@ struct Watch {
     DllEntry_t realEntry;
 };
 
-static Watch s_watches[12];
+static Watch s_watches[16];
 static int s_watchCount = 0;
 static PVOID s_ldrCookie = nullptr;
 
@@ -29,7 +29,7 @@ static BOOL WINAPI zzEntry(HINSTANCE instance, DWORD reason, LPVOID reserved) {
 }
 
 static const DllEntry_t ENTRY_WRAPPERS[] = { zzEntry<0>, zzEntry<1>, zzEntry<2>, zzEntry<3>, zzEntry<4>, zzEntry<5>, zzEntry<6>, zzEntry<7>,
-    zzEntry<8>, zzEntry<9>, zzEntry<10>, zzEntry<11> };
+    zzEntry<8>, zzEntry<9>, zzEntry<10>, zzEntry<11>, zzEntry<12>, zzEntry<13>, zzEntry<14>, zzEntry<15> };
 static_assert(_countof(ENTRY_WRAPPERS) == _countof(s_watches), "one entry wrapper per watch");
 
 /// Points the loader's entry for the module at the wrapper of the watch.
@@ -109,7 +109,7 @@ void OnModuleLoad(const wchar_t* name, void (*install)(HMODULE module), bool aft
     }
     s_watches[s_watchCount++] = { name, install, afterEntryPoint, nullptr };
     ReportWaiting();
-    if (s_ldrCookie) {
+    if (s_ldrCookie || g_dryRun) {
         return;
     }
     LdrRegisterDllNotification_t reg = (LdrRegisterDllNotification_t)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "LdrRegisterDllNotification");
@@ -120,6 +120,16 @@ void OnModuleLoad(const wchar_t* name, void (*install)(HMODULE module), bool aft
     LONG st = reg(0, LdrDllNotification, nullptr, &s_ldrCookie);
     if (st < 0) {
         MODULE_LOG("module watch: LdrRegisterDllNotification failed: 0x%08X", (unsigned)st);
+    }
+}
+
+void RunModuleWatches(const wchar_t* name, HMODULE module) {
+    for (int phase = 0; phase < 2; phase++) {
+        for (int i = 0; i < s_watchCount; i++) {
+            if (s_watches[i].afterEntryPoint == (phase == 1) && _wcsicmp(name, s_watches[i].name) == 0) {
+                s_watches[i].install(module);
+            }
+        }
     }
 }
 

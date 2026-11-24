@@ -20,6 +20,10 @@ BYTE* FindRipReference(HMODULE module, const char* opcode, int length, const voi
 
 bool InModule(HMODULE module, const void* address, size_t size);
 
+/// The function the module exports by that name, read from its export table, so that it works for an image modcheck put in place as well
+/// as for a module of the loader; nullptr for a missing or forwarded one.
+BYTE* FindExport(HMODULE module, const char* name);
+
 /// Finds a RIP-relative lea (any register) that loads target.
 BYTE* FindLeaTo(HMODULE module, const void* target);
 

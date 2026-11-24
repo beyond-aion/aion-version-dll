@@ -34,6 +34,8 @@ struct OptionRange {
 };
 
 struct ScalePlaces {
+    // 4.x: only the older option, a share of the screen size already
+    bool olderOption = false;
     size_t clampCount = 0;
     size_t fitCount = 0;
     BYTE* conversionAt = nullptr;
@@ -52,6 +54,12 @@ constexpr INT32 MAX_PERCENT = 100;
 /// (70 to 130 %) and only caps it at the screen size.
 ScalePlaces LocateUiScale(HMODULE game) {
     ScalePlaces places;
+    static const wchar_t OPTION_NAME[] = L"ui_scale_fix";
+    const wchar_t* name = (const wchar_t*)FindBytes(game, OPTION_NAME, sizeof(OPTION_NAME));
+    if (!name) {
+        places.olderOption = true;
+        return places;
+    }
     // mov dword ptr [rax+sliderMax], 60.0f
     std::vector<BYTE*> sliders = FindAllPatterns(game, "C7 80 ?? ?? 00 00 00 00 70 42");
     // cmp eax, 70; jge; mov eax, 70; jmp; mov eax, 130; cmp ecx, eax; cmovl eax, ecx; then the percentage becomes the scale:
@@ -98,8 +106,6 @@ ScalePlaces LocateUiScale(HMODULE game) {
     if (conversion) {
         places.conversion = PlanPatch(conversion + 15, &MAX_PERCENT, sizeof(MAX_PERCENT));
     }
-    static const wchar_t OPTION_NAME[] = L"ui_scale_fix";
-    const wchar_t* name = (const wchar_t*)FindBytes(game, OPTION_NAME, sizeof(OPTION_NAME));
     OptionRange range = { name, MIN_PERCENT, 130 };
     places.optionEntry = name ? FindBytes(game, &range, sizeof(range)) : nullptr;
     if (places.optionEntry) {
@@ -109,6 +115,11 @@ ScalePlaces LocateUiScale(HMODULE game) {
 }
 
 void ApplyUiScale(const ScalePlaces& places) {
+    if (places.olderOption) {
+        ModsLog("ui scale: the client fits the screen itself, only 5.x has the option to change");
+        ReportStatus(InstallStatus::NotApplicable);
+        return;
+    }
     ModsLog("ui scale: %zu sliders, %zu clamps, conversion=%p", places.sliders.size(), places.clampCount, places.conversionAt);
     if (places.sliders.empty() || places.clampCount == 0) {
         return;

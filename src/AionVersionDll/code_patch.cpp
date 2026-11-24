@@ -261,6 +261,10 @@ bool ApplyPatch(const CodePatch& patch) {
 }
 
 bool PatchMemory(void* at, const void* value, size_t size) {
+    if (g_dryRun) {
+        ReportWrite(at, true);
+        return true;
+    }
     DWORD oldProtect;
     // code and data share one section in some clients
     if (!VirtualProtect(at, size, PAGE_EXECUTE_READWRITE, &oldProtect)) {
@@ -272,4 +276,26 @@ bool PatchMemory(void* at, const void* value, size_t size) {
     FlushInstructionCache(GetCurrentProcess(), at, size);
     ReportWrite(at, true);
     return true;
+}
+
+BYTE* FindExport(HMODULE module, const char* name) {
+    BYTE* base = (BYTE*)module;
+    auto nt = (PIMAGE_NT_HEADERS)(base + ((PIMAGE_DOS_HEADER)base)->e_lfanew);
+    const IMAGE_DATA_DIRECTORY& directory = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (!directory.VirtualAddress) {
+        return nullptr;
+    }
+    auto exports = (PIMAGE_EXPORT_DIRECTORY)(base + directory.VirtualAddress);
+    DWORD* names = (DWORD*)(base + exports->AddressOfNames);
+    WORD* ordinals = (WORD*)(base + exports->AddressOfNameOrdinals);
+    DWORD* functions = (DWORD*)(base + exports->AddressOfFunctions);
+    for (DWORD i = 0; i < exports->NumberOfNames; i++) {
+        if (strcmp((const char*)(base + names[i]), name) == 0) {
+            DWORD rva = functions[ordinals[i]];
+            // a forwarder points at a name inside the export directory
+            bool forwarded = rva >= directory.VirtualAddress && rva < directory.VirtualAddress + directory.Size;
+            return forwarded ? nullptr : base + rva;
+        }
+    }
+    return nullptr;
 }

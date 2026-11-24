@@ -204,6 +204,11 @@ bool HasImportStubs(HMODULE module) {
 }
 
 void RestoreImportCalls(HMODULE module) {
+    // it runs the stubs of the packer to see where they lead
+    if (g_dryRun) {
+        ModsLog("fast start: import calls of %p left as they are in a dry run", module);
+        return;
+    }
     BYTE* base = (BYTE*)module;
     if (!FindPacker(base)) {
         return;

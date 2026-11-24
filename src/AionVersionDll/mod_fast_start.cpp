@@ -999,7 +999,7 @@ static void RestoreImportCallsBeforeUse(HMODULE crySystem) {
     if (real_CreateSystemInterface || !HasImportStubs(crySystem)) {
         return;
     }
-    real_CreateSystemInterface = (CreateSystemInterface_t)GetProcAddress(crySystem, "CreateSystemInterface");
+    real_CreateSystemInterface = (CreateSystemInterface_t)FindExport(crySystem, "CreateSystemInterface");
     if (real_CreateSystemInterface) {
         s_crySystem = crySystem;
         DetourTransactionBegin();

@@ -133,7 +133,7 @@ static const InstallEntry PROCESS_FIXES[] = {
 
 /// version.log opens first, so that every fix and mod below can log. Of the handlers for the same DLL and phase (module_load.h), the
 /// ones of the fixes run before those of the mods.
-static void InstallPatch(HINSTANCE self) {
+void InstallPatch(HINSTANCE self) {
     OpenModsLog(self);
     LogClientBuild(GetModuleHandleW(nullptr), "aion.bin");
     {
@@ -142,6 +142,7 @@ static void InstallPatch(HINSTANCE self) {
 
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
+        InstallModuleDumps();
         InstallAll(PROCESS_FIXES, nullptr);
         OnModuleLoad(L"Game.dll", InstallGameFixes, true);
         InstallMods();

@@ -154,8 +154,29 @@ static const char* NameOf(InstallStatus status) {
     }
 }
 
+// the images modcheck put in place of modules the loader did not load
+struct NamedImage {
+    const wchar_t* name;
+    const BYTE* base;
+    size_t size;
+};
+static NamedImage s_images[8];
+static int s_imageCount = 0;
+
+void NameImage(const wchar_t* name, HMODULE base, size_t size) {
+    if (s_imageCount < (int)(sizeof(s_images) / sizeof(s_images[0]))) {
+        s_images[s_imageCount++] = { name, (const BYTE*)base, size };
+    }
+}
+
 /// "Game.dll+8A80E2" for an address in a module, so that it reads the same in every run; "-" for none.
 static void FormatPlace(const void* at, char* text, size_t size) {
+    for (int i = 0; i < s_imageCount; i++) {
+        if (at >= s_images[i].base && at < s_images[i].base + s_images[i].size) {
+            sprintf_s(text, size, "%ls+%llX", s_images[i].name, (unsigned long long)((const BYTE*)at - s_images[i].base));
+            return;
+        }
+    }
     HMODULE module;
     if (!at || !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)at, &module)) {
         strcpy_s(text, size, at ? "?" : "-");
@@ -265,9 +286,11 @@ void ReportWrite(const void* at, bool done) {
     });
 }
 
+bool g_dryRun = false;
+
 LONG AttachHook(PVOID* real, PVOID hook) {
     PVOID target = *real;
-    LONG error = DetourAttach(real, hook);
+    LONG error = g_dryRun ? NO_ERROR : DetourAttach(real, hook);
     bool misplaced = ChangedWhileLocating(target);
     UpdateCurrent([&](Entry& e) {
         if (error == NO_ERROR && !misplaced) {

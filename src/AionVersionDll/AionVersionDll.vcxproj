@@ -139,6 +139,7 @@
     <ClCompile Include="ip_fix.cpp" />
     <ClCompile Include="light_rect_fix.cpp" />
     <ClCompile Include="module_load.cpp" />
+    <ClCompile Include="module_dump.cpp" />
     <ClCompile Include="mods_log.cpp" />
     <ClCompile Include="printscreen_fix.cpp" />
     <ClCompile Include="mods.cpp" />

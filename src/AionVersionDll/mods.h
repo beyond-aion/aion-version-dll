@@ -53,6 +53,8 @@ bool IsInWorld();
 
 /// Must be called inside an open Detours transaction.
 void InstallMods();
+/// [Debug] DumpModules: images of the client's modules for modcheck; added before the fixes and mods, to come before their changes.
+void InstallModuleDumps();
 void InstallChatTime(HMODULE game);
 /// Raises the idle limit of the client out of reach.
 void InstallAntiAfk(HMODULE game);

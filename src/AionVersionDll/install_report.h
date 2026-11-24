@@ -75,6 +75,13 @@ void ReportSearch(size_t count);
 /// A change of code or data at the given address and whether it was made.
 void ReportWrite(const void* at, bool done);
 
+/// modcheck: the changes and hooks are counted as made but left out, and the module watch only keeps what it would call, so the summary
+/// tells what a client would get from images of its modules.
+extern bool g_dryRun;
+
+/// Gives an image that modcheck put in place of a module the name the summary shows for the places in it.
+void NameImage(const wchar_t* name, HMODULE base, size_t size);
+
 /// DetourAttach that counts the hook for the current fix or mod. Must be called inside an open Detours transaction.
 LONG AttachHook(PVOID* real, PVOID hook);
 

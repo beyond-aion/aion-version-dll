@@ -143,7 +143,7 @@ Place Locate(HMODULE crySystem) {
     Place place;
     place.exported = true;
     for (int i = 0; i < _countof(EXPORTS); i++) {
-        place.exports[i] = (BYTE*)GetProcAddress(crySystem, EXPORTS[i]);
+        place.exports[i] = FindExport(crySystem, EXPORTS[i]);
         place.exported &= place.exports[i] != nullptr;
     }
     if (!place.exported) {

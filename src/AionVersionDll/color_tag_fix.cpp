@@ -1,21 +1,50 @@
 #include "code_patch.h"
 #include "mods_log.h"
 
-/// Older clients (4.6) cut the text of a color tag to the length of the tag name "color:" minus one, so 5 characters; later
-/// ones take 127. The limit is set up before the copy loop as lea r9d, [r12-1] with r12 the name length (6), and turned into
-/// lea r9d, [r12+79h] = 127.
-static CodePatch LocateColorTag(HMODULE game) {
-    BYTE* p = FindPattern(game, "45 8D 4C 24 FF 48 89 B4 24 ?? ?? ?? ?? 48 8D 74 7B 02 33 FF 45 85 C9 8B D7 8B DF 7E ?? 4C 8B C5 48 8B CE "
-                                "4C 2B C6 0F B7 01 66 85 C0 74 ?? 66 3D 3B 00 74 ?? 66 3D 5D 00");
-    static const BYTE DISPLACEMENT = 0x79;
-    return p ? PlanPatch(p + 4, &DISPLACEMENT, 1) : CodePatch();
+namespace {
+
+struct ColorTagPlace {
+    // the parser's compare of a tag with the name color:
+    BYTE* compare = nullptr;
+    // the limit of the text, in the clients that have one
+    CodePatch limit;
+};
+
+/// The parser compares a tag with each name through a pointer to it: mov rdx, [name]; ...; call [_wcsnicmp]. Older clients (4.6) then
+/// cut the text of a color tag to the length of the name "color:" minus one, so 5 characters: lea r9d, [r12-1] with r12 the name length,
+/// which becomes lea r9d, [r12+79h] = 127. Later ones (4.8, 5.x) take the text as it is and have no such limit.
+ColorTagPlace LocateColorTag(HMODULE game) {
+    ColorTagPlace place;
+    static const wchar_t NAME[] = L"color:";
+    const void* name = FindBytes(game, NAME, sizeof(NAME));
+    UINT64 nameAt = (UINT64)name;
+    const void* pointer = name ? FindBytes(game, &nameAt, sizeof(nameAt)) : nullptr;
+    place.compare = pointer ? FindRipReference(game, "48 8B 15", 7, pointer) : nullptr;
+    for (BYTE* p = place.compare; p && p < place.compare + 0x60 && !place.limit; p++) {
+        if (memcmp(p, "\x45\x8D\x4C\x24\xFF", 5) == 0) {
+            static const BYTE DISPLACEMENT = 0x79;
+            place.limit = PlanPatch(p + 4, &DISPLACEMENT, 1);
+        }
+    }
+    return place;
 }
 
-static void ApplyColorTag(const CodePatch& limit) {
-    if (limit && ApplyPatch(limit)) {
-        ModsLog("color tag text length fixed at %p", limit.at - 4);
+void ApplyColorTag(const ColorTagPlace& place) {
+    if (!place.compare) {
+        ModsLog("color tag: compare not found");
+        return;
+    }
+    if (!place.limit) {
+        ModsLog("color tag: text not cut in this client, only 4.6 cuts it");
+        ReportStatus(InstallStatus::NotApplicable);
+        return;
+    }
+    if (ApplyPatch(place.limit)) {
+        ModsLog("color tag text length fixed at %p", place.limit.at - 4);
     }
 }
+
+} // namespace
 
 void InstallColorTagFix(HMODULE game) {
     LocateThenApply(game, LocateColorTag, ApplyColorTag);
