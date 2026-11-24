@@ -148,39 +148,66 @@ static bool ReadLayout(const BYTE* start, const BYTE* end, const BYTE* check, La
     return false;
 }
 
-static void InstallLightRectFix(HMODULE renderer) {
-    InstallScope scope("light_rect_fix");
+namespace {
+
+/// The functions to replace, one for the point lights and one for the air light, and those left alone for another layout.
+struct Place {
+    BYTE* functions[2] = {};
+    int count = 0;
+    Layout layout;
+    std::vector<BYTE*> otherLayouts;
+};
+
+Place Locate(HMODULE renderer) {
+    Place place;
     // the depth test of the first projected corner: comiss xmm7, xmm0; ja fail; movss xmm6, [1.0]; comiss xmm0, xmm6; ja fail
     std::vector<BYTE*> checks = FindAllPatterns(renderer, "0F 2F F8 0F 87 ?? ?? ?? ?? F3 0F 10 35 ?? ?? ?? ?? 0F 2F C6 0F 87");
-    // one for the point lights and one for the air light
-    static PVOID targets[2];
-    DetourTransactionBegin();
-    DetourUpdateThread(GetCurrentThread());
-    int hooked = 0;
     for (BYTE* check : checks) {
         BYTE* function = FunctionStart(check);
         Layout layout;
-        if (!function || hooked == _countof(targets) || !ReadLayout(function, FunctionBodyEnd(function, 0x1000), check, &layout)) {
+        if (!function || place.count == _countof(place.functions) || !ReadLayout(function, FunctionBodyEnd(function, 0x1000), check, &layout)) {
             continue;
         }
         // both functions are replaced by the same one, which knows a single layout
-        if (hooked && !(layout == s_layout)) {
-            ModsLog("light rect fix: %p has another layout, left alone", function);
+        if (place.count && !(layout == place.layout)) {
+            place.otherLayouts.push_back(function);
             continue;
         }
-        s_layout = layout;
-        targets[hooked] = function;
+        place.layout = layout;
+        place.functions[place.count++] = function;
+    }
+    return place;
+}
+
+void Apply(const Place& place) {
+    static PVOID targets[2];
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+    s_layout = place.layout;
+    int hooked = 0;
+    for (int i = 0; i < place.count; i++) {
+        targets[hooked] = place.functions[i];
         if (AttachHook(&targets[hooked], LightRect) == NO_ERROR) {
-            ModsLog("light rect fix: hooked at %p (renderer %X %X %X, light %X %X)", function, layout.width, layout.height, layout.project,
-                layout.position, layout.radius);
+            ModsLog("light rect fix: hooked at %p (renderer %X %X %X, light %X %X)", place.functions[i], s_layout.width, s_layout.height,
+                s_layout.project, s_layout.position, s_layout.radius);
             hooked++;
         }
+    }
+    for (BYTE* function : place.otherLayouts) {
+        ModsLog("light rect fix: %p has another layout, left alone", function);
     }
     DetourTransactionCommit();
     if (!hooked) {
         ModsLog("light rect fix: not found");
     }
 }
+
+void InstallLightRectFix(HMODULE renderer) {
+    InstallScope scope("light_rect_fix");
+    LocateThenApply(renderer, Locate, Apply);
+}
+
+} // namespace
 
 void InstallLightRectFixOnLoad() {
     OnModuleLoad(L"XRenderD3D9.dll", InstallLightRectFix, true);

@@ -331,3 +331,15 @@ void LogClientBuild(HMODULE module, const char* name) {
     ModsLog("client: %s time stamp %08lX, image size %lX, version %s", name, nt->FileHeader.TimeDateStamp, nt->OptionalHeader.SizeOfImage,
         version);
 }
+
+void InstallAll(const InstallEntry* entries, size_t count, HMODULE module) {
+    for (size_t i = 0; i < count; i++) {
+        const InstallEntry& entry = entries[i];
+        if (entry.enabled && !entry.enabled()) {
+            ReportStatus(entry.id, InstallStatus::Disabled);
+            continue;
+        }
+        InstallScope scope(entry.id);
+        entry.install(module);
+    }
+}

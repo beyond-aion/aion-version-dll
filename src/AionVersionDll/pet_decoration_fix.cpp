@@ -62,22 +62,46 @@ const struct {
     { "3.9", PATTERN_39, FlagOfTest },
 };
 
-} // namespace
+struct Place {
+    CodePatch check; // 4.8: the customize_color check, to fall through
+    const char* version = nullptr; // a client whose check is left as it is
+    const BYTE* block = nullptr;
+    const char* flag = nullptr;
+};
 
-void InstallPetDecorationFix(HMODULE game) {
+Place Locate(HMODULE game) {
+    Place place;
     if (BYTE* block = FindPattern(game, PATTERN_48)) {
         static const BYTE FALL_THROUGH[2] = { 0x90, 0x90 };
-        bool done = PatchMemory(block, FALL_THROUGH, sizeof(FALL_THROUGH));
-        ModsLog("pet decoration 4.8: at %p, customize_color check %s", block, done ? "skipped" : "not patched");
-        return;
+        place.check = PlanPatch(block, FALL_THROUGH, sizeof(FALL_THROUGH));
+        return place;
     }
     for (const auto& client : CHECKED) {
         if (BYTE* block = FindPattern(game, client.pattern)) {
-            const char* flag = client.flag(game, block);
-            ModsLog("pet decoration %s: at %p, the check reads %s, left as it is", client.version, block, flag ? flag : "an unknown flag");
-            ReportStatus(InstallStatus::NotApplicable);
-            return;
+            place.version = client.version;
+            place.block = block;
+            place.flag = client.flag(game, block);
+            return place;
         }
     }
-    ModsLog("pet decoration: not found");
+    return place;
+}
+
+void Apply(const Place& place) {
+    if (place.check) {
+        bool done = ApplyPatch(place.check);
+        ModsLog("pet decoration 4.8: at %p, customize_color check %s", place.check.at, done ? "skipped" : "not patched");
+    } else if (place.version) {
+        ModsLog("pet decoration %s: at %p, the check reads %s, left as it is", place.version, place.block,
+            place.flag ? place.flag : "an unknown flag");
+        ReportStatus(InstallStatus::NotApplicable);
+    } else {
+        ModsLog("pet decoration: not found");
+    }
+}
+
+} // namespace
+
+void InstallPetDecorationFix(HMODULE game) {
+    LocateThenApply(game, Locate, Apply);
 }

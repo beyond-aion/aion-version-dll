@@ -163,21 +163,44 @@ static ShowAlert_t FindShowAlert(HMODULE game) {
     return nullptr;
 }
 
-void InstallChatTime(HMODULE game) {
+namespace {
+
+struct Place {
+    bool builtIn = false; // the client shows the time itself
+    BYTE* addMessage = nullptr;
+    BYTE* channel = nullptr; // nullptr unless the filter was found too
+    BYTE* filter = nullptr;
+    BYTE* alert = nullptr;
+};
+
+Place Locate(HMODULE game) {
+    Place place;
     // 5.x clients can show the time themselves, set per chat tab
     static const wchar_t BUILT_IN_TIME[] = L"[color:(%s);%f %f %f] %s";
     if (FindBytes(game, BUILT_IN_TIME, sizeof(BUILT_IN_TIME))) {
+        place.builtIn = true;
+        return place;
+    }
+    // the message entry point also shows GM alerts on screen
+    place.addMessage = FunctionUsing(game, GM_ALERT_STYLE);
+    BYTE* channel = place.addMessage ? FindChannelFunction(place.addMessage) : nullptr;
+    place.filter = channel ? (BYTE*)FindChatFilter(channel) : nullptr;
+    // the filter puts the time in, so without it the channel function is left to the entry point as before
+    place.channel = place.filter && InModule(game, channel, 16) ? channel : nullptr;
+    place.alert = place.addMessage ? (BYTE*)FindShowAlert(game) : nullptr;
+    return place;
+}
+
+void Apply(const Place& place) {
+    if (place.builtIn) {
         ModsLog("chat time: the client has its own");
         ReportStatus(InstallStatus::NotApplicable);
         return;
     }
-    // the message entry point also shows GM alerts on screen
-    real_ChatAddMessage = (ChatAddMessage_t)FunctionUsing(game, GM_ALERT_STYLE);
-    BYTE* channel = real_ChatAddMessage ? FindChannelFunction((BYTE*)real_ChatAddMessage) : nullptr;
-    real_FilterChatText = channel ? FindChatFilter(channel) : nullptr;
-    // the filter puts the time in, so without it the channel function is left to the entry point as before
-    real_ChatAddChannelMessage = real_FilterChatText && InModule(game, channel, 16) ? (ChatAddMessage_t)channel : nullptr;
-    real_ShowAlert = real_ChatAddMessage ? FindShowAlert(game) : nullptr;
+    real_ChatAddMessage = (ChatAddMessage_t)place.addMessage;
+    real_ChatAddChannelMessage = (ChatAddMessage_t)place.channel;
+    real_FilterChatText = (FilterChatText_t)place.filter;
+    real_ShowAlert = (ShowAlert_t)place.alert;
     ModsLog("chat time: add=%p channel=%p filter=%p alert=%p", real_ChatAddMessage, real_ChatAddChannelMessage, real_FilterChatText,
         real_ShowAlert);
     if (!real_ChatAddMessage) {
@@ -194,4 +217,10 @@ void InstallChatTime(HMODULE game) {
     if (real_FilterChatText) {
         AttachHook(&(PVOID&)real_FilterChatText, zzFilterChatText);
     }
+}
+
+} // namespace
+
+void InstallChatTime(HMODULE game) {
+    LocateThenApply(game, Locate, Apply);
 }

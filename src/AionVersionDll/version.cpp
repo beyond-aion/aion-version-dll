@@ -8,46 +8,50 @@
 
 static bool s_gfxEnabled = false;
 
-static void EnableHighQualityGraphicsOptions() {
+namespace {
+
+/// The highest resolutions CrySystem lets the high graphics options run at, 1920x1200 pixels and, close to it, 2560x1600, raised to
+/// 4096x4096. Searched in the first section of its code, which also holds them.
+struct GraphicsLimits {
+    CodePatch first;
+    CodePatch second;
+};
+
+GraphicsLimits LocateGraphicsLimits(HMODULE crySystem) {
+    GraphicsLimits limits;
     MEMORY_BASIC_INFORMATION mbi = {};
-    if (!VirtualQuery(GetModuleHandle(L"crysystem") + 0x1000, &mbi, sizeof(mbi))) {
-        return;
+    if (!crySystem || !VirtualQuery((BYTE*)crySystem + 0x1000, &mbi, sizeof(mbi)) || !(mbi.AllocationProtect & 0xF0)) {
+        return limits;
     }
-
-    if (!(mbi.AllocationProtect & 0xF0)) {
-        return;
-    }
-
-    DWORD oldProtect;
-    if (!VirtualProtect(mbi.BaseAddress, mbi.RegionSize, PAGE_EXECUTE_READWRITE, &oldProtect)) {
-        return;
-    }
-
-    char* c = (char*)mbi.BaseAddress;
-    char* end = c + mbi.RegionSize - sizeof(DWORD);
-
-    for (; c < end; c++) {
-        DWORD* d = (DWORD*)c;
-        if (*d == 1920 * 1200) {
-            *d = 4096 * 4096;
-            ReportWrite(d, true);
-            char* e = c - 0x100;
-            char* e_end = c + 0x100;
-            e_end = min(end, e_end);
-            for (; e < e_end; e++) {
-                DWORD* d2 = (DWORD*)e;
-                if (*d2 == 2560 * 1600) {
-                    *d2 = 4096 * 4096;
-                    ReportWrite(d2, true);
-                    break;
-                }
-            }
-            break;
+    static const DWORD RAISED = 4096 * 4096;
+    BYTE* begin = (BYTE*)mbi.BaseAddress;
+    BYTE* end = begin + mbi.RegionSize - sizeof(DWORD);
+    for (BYTE* c = begin; c < end; c++) {
+        if (*(DWORD*)c != 1920 * 1200) {
+            continue;
         }
+        limits.first = PlanPatch(c, &RAISED, sizeof(RAISED));
+        for (BYTE* e = c - 0x100; e < min(end, c + 0x100); e++) {
+            if (*(DWORD*)e == 2560 * 1600) {
+                limits.second = PlanPatch(e, &RAISED, sizeof(RAISED));
+                break;
+            }
+        }
+        break;
     }
-
-    VirtualProtect(mbi.BaseAddress, mbi.RegionSize, oldProtect, &oldProtect);
+    return limits;
 }
+
+void ApplyGraphicsLimits(const GraphicsLimits& limits) {
+    ApplyPatch(limits.first);
+    ApplyPatch(limits.second);
+}
+
+void EnableHighQualityGraphicsOptions() {
+    LocateThenApply(GetModuleHandle(L"crysystem"), LocateGraphicsLimits, ApplyGraphicsLimits);
+}
+
+} // namespace
 
 void InstallOrUpdateCameraFix(HWND hWnd);
 void InstallIpFix();
@@ -56,13 +60,6 @@ void InstallShaderFix();
 void Install64BitStackFix();
 void InstallFullscreenFix();
 void InstallChatLogFix();
-/// Installs one fix in a scope of its own, for the summary in version.log.
-template <typename... Args>
-static void Install(const char* id, void (*install)(Args...), Args... args) {
-    InstallScope scope(id);
-    install(args...);
-}
-
 void InstallCrashLog();
 void InstallReserveFix();
 void InstallColorTagFix(HMODULE game);
@@ -70,22 +67,30 @@ void InstallServerCheckFix(HMODULE game);
 void InstallPetDecorationFix(HMODULE game);
 void InstallLightRectFixOnLoad();
 
-/// The fixes of Game.dll, once its entry point has run.
+/// The fixes of Game.dll in the order they install, once its entry point has run.
+static const InstallEntry GAME_FIXES[] = {
+    { "color_tag_fix", nullptr, InstallColorTagFix },
+    { "server_check_fix", nullptr, InstallServerCheckFix },
+    { "pet_decoration_fix", nullptr, InstallPetDecorationFix },
+};
+
 static void InstallGameFixes(HMODULE game) {
     InstallScope scope("Game.dll fixes", true);
     LogClientBuild(game, "Game.dll");
-    Install("color_tag_fix", InstallColorTagFix, game);
-    Install("server_check_fix", InstallServerCheckFix, game);
-    Install("pet_decoration_fix", InstallPetDecorationFix, game);
+    InstallAll(GAME_FIXES, game);
 }
 
 static decltype(SetWindowLongA)* real_SetWindowLongA = SetWindowLongA;
 static LONG WINAPI zzSetWindowLongA(_In_ HWND hWnd, _In_ int nIndex, _In_ LONG dwNewLong) {
     if (!s_gfxEnabled) {
-        Install("graphics_options", EnableHighQualityGraphicsOptions);
+        InstallScope scope("graphics_options");
+        EnableHighQualityGraphicsOptions();
         s_gfxEnabled = true;
     }
-    Install("camera_fix", InstallOrUpdateCameraFix, hWnd);
+    {
+        InstallScope scope("camera_fix");
+        InstallOrUpdateCameraFix(hWnd);
+    }
     return real_SetWindowLongA(hWnd, nIndex, dwNewLong);
 }
 
@@ -112,6 +117,20 @@ static void FixClientStartupWithHighCoreCountCpus() {
     }
 }
 
+/// The fixes that install at the process start, most of them hooks of Windows functions, some waiting for a DLL of the client.
+static const InstallEntry PROCESS_FIXES[] = {
+    { "ip_fix", nullptr, [](HMODULE) { InstallIpFix(); } },
+    { "xigncode_fix", nullptr, [](HMODULE) { InstallXigncodeFix(); } },
+    { "camera_fix", nullptr, [](HMODULE) { InstallGraphicsOptionsFixAndCameraFix(); } },
+    { "shader_fix", nullptr, [](HMODULE) { InstallShaderFix(); } },
+    { "fullscreen_fix", nullptr, [](HMODULE) { InstallFullscreenFix(); } },
+    { "chat_log_fix", nullptr, [](HMODULE) { InstallChatLogFix(); } },
+    { "stack_fix", nullptr, [](HMODULE) { Install64BitStackFix(); } },
+    { "crash_log", nullptr, [](HMODULE) { InstallCrashLog(); } },
+    { "reserve_fix", nullptr, [](HMODULE) { InstallReserveFix(); } },
+    { "light_rect_fix", nullptr, [](HMODULE) { InstallLightRectFixOnLoad(); } },
+};
+
 /// version.log opens first, so that every fix and mod below can log. Of the handlers for the same DLL and phase (module_load.h), the
 /// ones of the fixes run before those of the mods.
 static void InstallPatch(HINSTANCE self) {
@@ -123,22 +142,14 @@ static void InstallPatch(HINSTANCE self) {
 
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
-        Install("ip_fix", InstallIpFix);
-        Install("xigncode_fix", InstallXigncodeFix);
-        Install("camera_fix", InstallGraphicsOptionsFixAndCameraFix);
-        Install("shader_fix", InstallShaderFix);
-        Install("fullscreen_fix", InstallFullscreenFix);
-        Install("chat_log_fix", InstallChatLogFix);
-        Install("stack_fix", Install64BitStackFix);
-        Install("crash_log", InstallCrashLog);
-        Install("reserve_fix", InstallReserveFix);
-        Install("light_rect_fix", InstallLightRectFixOnLoad);
+        InstallAll(PROCESS_FIXES, nullptr);
         OnModuleLoad(L"Game.dll", InstallGameFixes, true);
         InstallMods();
         LONG error = DetourTransactionCommit();
         ModsLog("fixes committed: %ld", error);
 
-        Install("affinity_fix", FixClientStartupWithHighCoreCountCpus);
+        InstallScope affinity("affinity_fix");
+        FixClientStartupWithHighCoreCountCpus();
     }
     LogInstallSummary("at the start", false);
 }

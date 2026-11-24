@@ -53,7 +53,7 @@ bool PatchMemory(void* at, const void* value, size_t size);
 
 /// A change found by a search: where, the bytes the search saw there and the bytes to put instead.
 struct CodePatch {
-    static constexpr size_t MAX_SIZE = 16;
+    static constexpr size_t MAX_SIZE = 48;
     BYTE* at = nullptr;
     size_t size = 0;
     BYTE expected[MAX_SIZE] = {};

@@ -40,12 +40,12 @@ static DWORD WINAPI zzGetTickCount() {
     return s_waitTickReturn && past <= 1 ? now + 3000 : now;
 }
 
-static bool FindUnloadWait(HMODULE exe) {
+static BYTE* LocateUnloadWait(HMODULE exe) {
     static const char NAME[] = "AionUnloadMutex";
     const void* text = FindBytes(exe, NAME, sizeof(NAME));
     BYTE* lea = text ? FindLeaTo(exe, text) : nullptr;
     if (!lea) {
-        return false;
+        return nullptr;
     }
     // functions start after the int3 padding in front of them
     BYTE* poll = lea;
@@ -54,7 +54,7 @@ static bool FindUnloadWait(HMODULE exe) {
     }
     BYTE* call = FindCallTo(exe, poll);
     if (!call || call[-5] != 0x76 || call[-3] != 0x48 || call[-2] != 0x8B) {
-        return false;
+        return nullptr;
     }
     BYTE* wait = call;
     while (wait > call - 0x100 && !(wait[-1] == 0xCC && wait[0] != 0xCC)) {
@@ -64,12 +64,29 @@ static bool FindUnloadWait(HMODULE exe) {
     int calls = 0;
     for (BYTE* p = wait; p < call - 5; p++) {
         if (p[0] == 0xE8 && ++calls == 2) {
-            s_waitTickReturn = p + 5;
-            ModsLog("fast start: unload wait at %p", p);
-            return true;
+            return p;
         }
     }
-    return false;
+    return nullptr;
+}
+
+/// Lets the hook of GetTickCount tell the call in the loop by where it returns to.
+static void ApplyUnloadWait(BYTE* call) {
+    s_waitTickReturn = call + 5;
+    ModsLog("fast start: unload wait at %p", call);
+}
+
+/// The call of GetTickCount in the loop that waits for another client to unload, if the code is there yet.
+static bool FindUnloadWait(HMODULE exe) {
+    BYTE* call;
+    {
+        LocatePhase phase;
+        call = LocateUnloadWait(exe);
+    }
+    if (call) {
+        ApplyUnloadWait(call);
+    }
+    return call != nullptr;
 }
 
 /// Some clients unpack aion.bin only after version.dll is loaded, so the code may not be there yet.
@@ -160,33 +177,57 @@ static double __fastcall zzClockMeasure(double* secondsPerTick) {
 /// with 16 of them. rdtsc; shl rdx, 20h; mov ecx, 100 becomes 10 ms, which still gives the clock to about a percent, but the timer of
 /// Windows makes that 15 ms. The time stamp counter runs at one rate on every processor, so only the first one is measured and the
 /// others get its clock in MHz and seconds per tick.
-static void ShortenClockMeasure(HMODULE crySystem) {
+struct ClockPlace {
+    // the client loads CrySystem.dll once more when it closes, already shortened then
+    bool shortened = false;
+    CodePatch duration;
+    BYTE* function = nullptr;
+};
+
+static ClockPlace LocateClockMeasure(HMODULE crySystem) {
+    ClockPlace place;
+    static const DWORD MS = 10;
     // 5.x clients have an xorps between the shift and the mov
     for (BYTE* rdtsc : FindAllPatterns(crySystem, "0F 31 48 C1 E2 20")) {
         for (BYTE* p = rdtsc + 6; p < rdtsc + 12; p++) {
-            DWORD ms = 10;
-            if (p[0] == 0xB9 && *(DWORD*)(p + 1) == ms) {
-                // the client loads CrySystem.dll once more when it closes
-                return;
+            if (p[0] == 0xB9 && *(DWORD*)(p + 1) == MS) {
+                place.shortened = true;
+                return place;
             }
             if (p[0] == 0xB9 && *(DWORD*)(p + 1) == 100) {
-                PatchMemory(p + 1, &ms, sizeof(ms));
+                place.duration = PlanPatch(p + 1, &MS, sizeof(MS));
                 DWORD64 base = 0;
                 PRUNTIME_FUNCTION function = RtlLookupFunctionEntry((DWORD64)p, &base, nullptr);
-                LONG error = -1;
-                if (function && !real_ClockMeasure) {
-                    real_ClockMeasure = (ClockMeasure_t)(base + function->BeginAddress);
-                    DetourTransactionBegin();
-                    DetourUpdateThread(GetCurrentThread());
-                    AttachHook(&(PVOID&)real_ClockMeasure, zzClockMeasure);
-                    error = DetourTransactionCommit();
-                }
-                ModsLog("fast start: clock measure at %p, once: %ld", p, error);
-                return;
+                place.function = function ? (BYTE*)(base + function->BeginAddress) : nullptr;
+                return place;
             }
         }
     }
-    ModsLog("fast start: clock measure not found");
+    return place;
+}
+
+static void ApplyClockMeasure(const ClockPlace& place) {
+    if (place.shortened) {
+        return;
+    }
+    if (!place.duration) {
+        ModsLog("fast start: clock measure not found");
+        return;
+    }
+    ApplyPatch(place.duration);
+    LONG error = -1;
+    if (place.function && !real_ClockMeasure) {
+        real_ClockMeasure = (ClockMeasure_t)place.function;
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        AttachHook(&(PVOID&)real_ClockMeasure, zzClockMeasure);
+        error = DetourTransactionCommit();
+    }
+    ModsLog("fast start: clock measure at %p, once: %ld", place.duration.at - 1, error);
+}
+
+static void ShortenClockMeasure(HMODULE crySystem) {
+    LocateThenApply(crySystem, LocateClockMeasure, ApplyClockMeasure);
 }
 
 // 4.x clients keep much of their game data in memory as zlib blocks of 16 KB, which CrySystem compresses with the zlib 1.1.4 it
@@ -245,25 +286,37 @@ static BYTE* FindZlibFunction(HMODULE crySystem, const char* pattern, const void
     return function && ResolveRip(function + strlen(pattern) / 3 + 1, function + strlen(pattern) / 3 + 5) == version ? function : nullptr;
 }
 
-static void HookZlib(HMODULE crySystem) {
-    static const char VERSION4[] = "1.1.4", VERSION5[] = "1.2.8";
-    if (real_compress2) {
-        return;
-    }
+struct ZlibPlace {
     BYTE* compress = nullptr;
     BYTE* uncompress = nullptr;
+    // 4.x: zlib 1.1.4, which keeps the game data in memory as blocks
+    bool blocksInMemory = false;
+};
+
+static ZlibPlace LocateZlib(HMODULE crySystem) {
+    static const char VERSION4[] = "1.1.4", VERSION5[] = "1.2.8";
+    ZlibPlace place;
+    BYTE*& compress = place.compress;
+    BYTE*& uncompress = place.uncompress;
     if (const void* version = FindBytes(crySystem, VERSION4, sizeof(VERSION4))) {
         compress = FindZlibFunction(crySystem, "4C 8B DC 48 81 EC 98 00 00 00 8B 02 4D 89 43 88 45 89 4B 90 49 89 4B 98 89 44 24 38 33 C0 49 89 "
             "7B F0 48 8B FA 8B 94 24 C0 00 00 00 44 8D 48 58 4C 8D 05", version);
         uncompress = FindZlibFunction(crySystem, "4C 8B DC 48 81 EC 88 00 00 00 8B 02 4D 89 43 98 49 89 4B A8 45 89 4B A0 89 44 24 38 33 C0 49 89 "
             "7B 20 48 8B FA 49 8D 4B 98 44 8D 40 58 48 8D 15", version);
-        s_blocksInMemory = true;
+        place.blocksInMemory = true;
     } else if (const void* version = FindBytes(crySystem, VERSION5, sizeof(VERSION5))) {
         compress = FindZlibFunction(crySystem, "4C 8B DC 57 48 81 EC 80 00 00 00 8B 02 4D 89 43 98 45 89 4B A0 49 89 4B A8 89 44 24 38 33 C0 48 8B "
             "FA 8B 94 24 B0 00 00 00 4C 8D 05", version);
         uncompress = FindZlibFunction(crySystem, "40 57 48 81 EC 80 00 00 00 8B 02 48 8B FA 4C 89 44 24 20 89 44 24 38 33 C0 48 89 4C 24 30 48 8D 15",
             version);
     }
+    return place;
+}
+
+static void ApplyZlib(const ZlibPlace& place) {
+    s_blocksInMemory |= place.blocksInMemory;
+    BYTE* compress = place.compress;
+    BYTE* uncompress = place.uncompress;
     if (!compress || !uncompress) {
         ModsLog("fast start: zlib not found (compress2 %p, uncompress %p)", compress, uncompress);
         return;
@@ -275,6 +328,12 @@ static void HookZlib(HMODULE crySystem) {
     AttachHook(&(PVOID&)real_compress2, zz_compress2);
     AttachHook(&(PVOID&)real_uncompress, zz_uncompress);
     ModsLog("fast start: zlib at %p and %p: %ld", compress, uncompress, DetourTransactionCommit());
+}
+
+static void HookZlib(HMODULE crySystem) {
+    if (!real_compress2) {
+        LocateThenApply(crySystem, LocateZlib, ApplyZlib);
+    }
 }
 
 // The files packed in the .pak archives are raw deflate streams, which CrySystem inflates with its zlib as it reads them, on the main
@@ -357,11 +416,13 @@ static int __cdecl zzRawInflate5(void* allocator, OutputBlock* out, unsigned lon
     return 0;
 }
 
-static void HookRawInflate(HMODULE crySystem) {
+struct InflatePlace {
+    BYTE* inflate4 = nullptr;
+    BYTE* inflate5 = nullptr;
+};
+
+static InflatePlace LocateRawInflate(HMODULE crySystem) {
     static const char VERSION4[] = "1.1.4", VERSION5[] = "1.2.8";
-    if (real_RawInflate4 || real_RawInflate5) {
-        return;
-    }
     const void* version4 = FindBytes(crySystem, VERSION4, sizeof(VERSION4));
     const void* version5 = FindBytes(crySystem, VERSION5, sizeof(VERSION5));
     BYTE* inflate4 = version4 ? FindZlibFunction(crySystem, "4C 8B DC 48 81 EC 98 00 00 00 8B 84 24 C0 00 00 00 4D 89 4B 88 41 B9 58 00 00 00 89 44 24 "
@@ -369,6 +430,12 @@ static void HookRawInflate(HMODULE crySystem) {
     BYTE* inflate5 = version5 ? FindZlibFunction(crySystem, "4C 8B DC 49 89 5B 10 56 48 81 EC 80 00 00 00 8B 84 24 B0 00 00 00 4D 89 4B 98 41 B9 58 00 00 "
         "00 89 44 24 28 48 8D 42 0C 49 8B F0 49 89 43 A8 8B 42 08 48 8B DA 89 44 24 38 48 8D 05 ?? ?? ?? ?? 49 89 4B D8 49 89 43 C8 48 8D 05 ?? ?? ?? ?? 4C "
         "8D 05", version5) : nullptr;
+    return { inflate4, inflate5 };
+}
+
+static void ApplyRawInflate(const InflatePlace& place) {
+    BYTE* inflate4 = place.inflate4;
+    BYTE* inflate5 = place.inflate5;
     if (!inflate4 && !inflate5) {
         ModsLog("fast start: pak inflate not found");
         return;
@@ -383,6 +450,12 @@ static void HookRawInflate(HMODULE crySystem) {
         AttachHook(&(PVOID&)real_RawInflate5, zzRawInflate5);
     }
     ModsLog("fast start: pak inflate at %p: %ld", inflate4 ? inflate4 : inflate5, DetourTransactionCommit());
+}
+
+static void HookRawInflate(HMODULE crySystem) {
+    if (!real_RawInflate4 && !real_RawInflate5) {
+        LocateThenApply(crySystem, LocateRawInflate, ApplyRawInflate);
+    }
 }
 
 // Opening a .pak archive, CrySystem puts the name of every file into a tree of folders (a std::map of std::string per folder, a node
@@ -712,64 +785,100 @@ static bool __fastcall zzBuildFileEntryMap(BYTE* factory) {
     return real_BuildFileEntryMap(factory);
 }
 
+/// What the search of the pak tree found: the tree's functions, and the function filling the names in 4.x with the calls it makes.
+struct PakTreePlace {
+    BYTE* addFile = nullptr;
+    BYTE* prepare = nullptr;
+    BYTE* add = nullptr;
+    BYTE* count = nullptr;
+    BYTE* size = nullptr;
+    BYTE* write = nullptr;
+    BYTE* makeCache = nullptr;
+    int treeAt = 0;
+    // whether the directory maker was found and the size and write functions walk the tree
+    bool found = false;
+    // the names: not the 4.x function (5.x lowers the case inline), its helpers missing, or not reading as expected
+    enum { NamesNone, NamesMissing, NamesUnexpected, NamesFound } names = NamesNone;
+    BYTE* build = nullptr;
+    BYTE* seek = nullptr;
+    BYTE* read = nullptr;
+    BYTE* alloc = nullptr;
+    BYTE* free = nullptr;
+};
+
 /// The 4.x function reads the size and offset of the central directory at FACTORY_CDR_SIZE and FACTORY_CDR_OFFSET; its first calls
 /// are Seek, the allocator, Read, the release of the block and AddFileEntry, which checks FACTORY_INIT_METHOD and FACTORY_WANTS_MAP.
-/// Must be called inside an open Detours transaction; returns the function when it is hooked.
-static BYTE* HookBuildFileEntryMap(HMODULE crySystem, BYTE* addFile) {
+static void FindBuildFileEntryMap(HMODULE crySystem, PakTreePlace& place) {
     static const BYTE PROLOGUE[] = { 0x48, 0x81, 0xEC, 0xA8, 0x00, 0x00, 0x00, 0x8B, 0x51, FACTORY_CDR_OFFSET, 0x45, 0x33, 0xC0 };
     static const BYTE SIZE_READ[] = { 0x8B, 0x45, FACTORY_CDR_SIZE, 0x85, 0xC0 };
     static const BYTE INIT_CHECK[] = { 0x83, 0x7F, FACTORY_INIT_METHOD, 0x01 };
     static const BYTE MAP_CHECK[] = { 0x80, 0xBF, FACTORY_WANTS_MAP, 0x00, 0x00, 0x00, 0x00 };
-    BYTE* build = NamedFunction(crySystem, "ZipDir::CacheFactory::BuildFileEntryMap");
-    BYTE* seek = NamedFunction(crySystem, "ZipDir::CacheFactory::Seek");
-    BYTE* read = NamedFunction(crySystem, "ZipDir::CacheFactory::Read");
+    BYTE* build = place.build = NamedFunction(crySystem, "ZipDir::CacheFactory::BuildFileEntryMap");
+    BYTE* seek = place.seek = NamedFunction(crySystem, "ZipDir::CacheFactory::Seek");
+    BYTE* read = place.read = NamedFunction(crySystem, "ZipDir::CacheFactory::Read");
     if (!build || memcmp(build, PROLOGUE, sizeof(PROLOGUE)) || memcmp(build + 0x31, SIZE_READ, sizeof(SIZE_READ))) {
-        // 5.x clients lower the case inline
-        return nullptr;
+        return;
     }
     if (!seek || !read || !s_tolower) {
-        ModsLog("fast start: pak names not found (Seek %p, Read %p, tolower %p)", seek, read, s_tolower);
-        return nullptr;
+        place.names = PakTreePlace::NamesMissing;
+        return;
     }
+    BYTE* addFile = place.addFile;
     BYTE* addEnd = FunctionBodyEnd(addFile, 0x1000);
     auto inAdd = [&](const BYTE* bytes, size_t length) { return std::search(addFile, addEnd, bytes, bytes + length) != addEnd; };
     std::vector<CallSite> calls = CallsOf(build);
     if (calls.size() < 6 || calls[0].target != seek || calls[2].target != read || calls[4].target != addFile || calls[3].target != calls[5].target
         || !inAdd(INIT_CHECK, sizeof(INIT_CHECK)) || !inAdd(MAP_CHECK, sizeof(MAP_CHECK))) {
-        ModsLog("fast start: pak names at %p do not read as expected", build);
-        ReportStatus(InstallStatus::PatchFailed);
-        return nullptr;
+        place.names = PakTreePlace::NamesUnexpected;
+        return;
     }
-    s_factorySeek = (FactorySeek_t)seek;
-    s_factoryRead = (FactoryRead_t)read;
-    s_pakAlloc = (PakAlloc_t)calls[1].target;
-    s_pakFree = (PakFree_t)calls[3].target;
-    real_BuildFileEntryMap = (BuildFileEntryMap_t)build;
+    place.names = PakTreePlace::NamesFound;
+    place.alloc = calls[1].target;
+    place.free = calls[3].target;
+}
+
+/// Must be called inside an open Detours transaction; returns the function when it is hooked.
+static BYTE* ApplyBuildFileEntryMap(const PakTreePlace& place) {
+    switch (place.names) {
+        case PakTreePlace::NamesNone:
+            // 5.x clients lower the case inline
+            return nullptr;
+        case PakTreePlace::NamesMissing:
+            ModsLog("fast start: pak names not found (Seek %p, Read %p, tolower %p)", place.seek, place.read, s_tolower);
+            return nullptr;
+        case PakTreePlace::NamesUnexpected:
+            ModsLog("fast start: pak names at %p do not read as expected", place.build);
+            ReportStatus(InstallStatus::PatchFailed);
+            return nullptr;
+        case PakTreePlace::NamesFound:
+            break;
+    }
+    s_factorySeek = (FactorySeek_t)place.seek;
+    s_factoryRead = (FactoryRead_t)place.read;
+    s_pakAlloc = (PakAlloc_t)place.alloc;
+    s_pakFree = (PakFree_t)place.free;
+    real_BuildFileEntryMap = (BuildFileEntryMap_t)place.build;
     AttachHook(&(PVOID&)real_BuildFileEntryMap, zzBuildFileEntryMap);
-    return build;
+    return place.build;
 }
 
 /// Finds the functions of the tree from the factory that fills it: AddFileEntry adds to it and Prepare counts its files, both with the
 /// tree at the same offset in the factory; of the callers of Prepare, the one making the directory then asks the tree for its size and
 /// has it written, the one reading an archive for writing does neither.
-static void HookPakTree(HMODULE crySystem) {
-    if (real_MakeCache) {
-        return;
-    }
-    BYTE* addFile = NamedFunction(crySystem, "ZipDir::CacheFactory::AddFileEntry");
-    BYTE* prepare = NamedFunction(crySystem, "ZipDir::CacheFactory::Prepare");
+static PakTreePlace LocatePakTree(HMODULE crySystem) {
+    PakTreePlace place;
+    BYTE* addFile = place.addFile = NamedFunction(crySystem, "ZipDir::CacheFactory::AddFileEntry");
+    BYTE* prepare = place.prepare = NamedFunction(crySystem, "ZipDir::CacheFactory::Prepare");
     if (!addFile || !prepare) {
-        ModsLog("fast start: pak tree not found (AddFileEntry %p, Prepare %p)", addFile, prepare);
-        return;
+        return place;
     }
     std::vector<CallSite> adds = CallsOf(addFile);
-    BYTE *add = nullptr, *count = nullptr, *size = nullptr, *write = nullptr, *makeCache = nullptr;
     for (const CallSite& counting : CallsOf(prepare)) {
         for (const CallSite& adding : adds) {
             if (counting.thisAt > 0 && adding.thisAt == counting.thisAt && adding.target != counting.target) {
-                s_pakTreeAt = counting.thisAt;
-                add = adding.target;
-                count = counting.target;
+                place.treeAt = counting.thisAt;
+                place.add = adding.target;
+                place.count = counting.target;
             }
         }
     }
@@ -777,27 +886,40 @@ static void HookPakTree(HMODULE crySystem) {
         BYTE* caller = FunctionStart(call);
         std::vector<BYTE*> treeCalls;
         for (const CallSite& site : caller ? CallsOf(caller) : std::vector<CallSite>()) {
-            if (add && site.thisAt == s_pakTreeAt) {
+            if (place.add && site.thisAt == place.treeAt) {
                 treeCalls.push_back(site.target);
             }
         }
         if (treeCalls.size() == 2 && treeCalls[0] != treeCalls[1]) {
-            makeCache = caller;
-            size = treeCalls[0];
-            write = treeCalls[1];
+            place.makeCache = caller;
+            place.size = treeCalls[0];
+            place.write = treeCalls[1];
         }
     }
     // both walk the tree by calling themselves for every folder
-    if (!makeCache || !Calls(size, size) || !Calls(write, write)) {
-        ModsLog("fast start: pak tree not found (add %p, count %p at +%x, size %p, write %p, directory %p)", add, count, s_pakTreeAt, size,
-            write, makeCache);
+    place.found = place.makeCache && Calls(place.size, place.size) && Calls(place.write, place.write);
+    if (place.found) {
+        FindBuildFileEntryMap(crySystem, place);
+    }
+    return place;
+}
+
+static void ApplyPakTree(const PakTreePlace& place) {
+    if (!place.addFile || !place.prepare) {
+        ModsLog("fast start: pak tree not found (AddFileEntry %p, Prepare %p)", place.addFile, place.prepare);
         return;
     }
-    real_TreeAdd = (TreeAdd_t)add;
-    real_TreeCount = (TreeCount_t)count;
-    real_TreeSize = (TreeSize_t)size;
-    real_TreeWrite = (TreeWrite_t)write;
-    real_MakeCache = (MakeCache_t)makeCache;
+    s_pakTreeAt = place.treeAt;
+    if (!place.found) {
+        ModsLog("fast start: pak tree not found (add %p, count %p at +%x, size %p, write %p, directory %p)", place.add, place.count, s_pakTreeAt,
+            place.size, place.write, place.makeCache);
+        return;
+    }
+    real_TreeAdd = (TreeAdd_t)place.add;
+    real_TreeCount = (TreeCount_t)place.count;
+    real_TreeSize = (TreeSize_t)place.size;
+    real_TreeWrite = (TreeWrite_t)place.write;
+    real_MakeCache = (MakeCache_t)place.makeCache;
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
     AttachHook(&(PVOID&)real_TreeAdd, zzTreeAdd);
@@ -805,15 +927,27 @@ static void HookPakTree(HMODULE crySystem) {
     AttachHook(&(PVOID&)real_TreeSize, zzTreeSize);
     AttachHook(&(PVOID&)real_TreeWrite, zzTreeWrite);
     AttachHook(&(PVOID&)real_MakeCache, zzMakeCache);
-    BYTE* names = HookBuildFileEntryMap(crySystem, addFile);
-    ModsLog("fast start: pak tree at %p, %p, %p, %p (+%x), directory at %p, names at %p: %ld", add, count, size, write, s_pakTreeAt,
-        makeCache, names, DetourTransactionCommit());
+    BYTE* names = ApplyBuildFileEntryMap(place);
+    ModsLog("fast start: pak tree at %p, %p, %p, %p (+%x), directory at %p, names at %p: %ld", place.add, place.count, place.size, place.write,
+        s_pakTreeAt, place.makeCache, names, DetourTransactionCommit());
+}
+
+static void HookPakTree(HMODULE crySystem) {
+    if (!real_MakeCache) {
+        LocateThenApply(crySystem, LocatePakTree, ApplyPakTree);
+    }
 }
 
 /// 5.x clients show their logos in CrySystem while the game data loads, in phases timed by the milliseconds since each began: shown
 /// for 2000, faded in over 750, shown for 2000, then faded out over 750 once the loading thread is done (cmp ebx, 7D0h / 2EEh), 5.5
 /// seconds even when the data is long loaded. All six limits become 0, so the logos end as soon as the loading does.
-static void SkipIntroLogos(HMODULE crySystem) {
+struct IntroLogosPlace {
+    BYTE* function = nullptr;
+    std::vector<CodePatch> limits;
+};
+
+static IntroLogosPlace LocateIntroLogos(HMODULE crySystem) {
+    IntroLogosPlace place;
     std::vector<BYTE*> limits = FindAllPatterns(crySystem, "81 FB D0 07 00 00");
     std::vector<BYTE*> fades = FindAllPatterns(crySystem, "81 FB EE 02 00 00");
     limits.insert(limits.end(), fades.begin(), fades.end());
@@ -822,14 +956,29 @@ static void SkipIntroLogos(HMODULE crySystem) {
         function = function && FunctionStart(limit) == function ? function : nullptr;
     }
     if (!function) {
+        return place;
+    }
+    static const DWORD ZERO = 0;
+    for (BYTE* limit : limits) {
+        place.limits.push_back(PlanPatch(limit + 2, &ZERO, sizeof(ZERO)));
+    }
+    place.function = function;
+    return place;
+}
+
+static void ApplyIntroLogos(const IntroLogosPlace& place) {
+    if (!place.function) {
         // the client loads CrySystem.dll once more when it closes, without them
         return;
     }
-    DWORD zero = 0;
-    for (BYTE* limit : limits) {
-        PatchMemory(limit + 2, &zero, sizeof(zero));
+    for (const CodePatch& limit : place.limits) {
+        ApplyPatch(limit);
     }
-    ModsLog("fast start: intro logos at %p", function);
+    ModsLog("fast start: intro logos at %p", place.function);
+}
+
+static void SkipIntroLogos(HMODULE crySystem) {
+    LocateThenApply(crySystem, LocateIntroLogos, ApplyIntroLogos);
 }
 
 static void HookRuntime();
@@ -1219,8 +1368,27 @@ static __int64 __fastcall zzSetField(const DWORD* fields, __int64 row, const wch
     return found < 0 ? 0 : real_SetField(fields + 8 * found, row, name, value);
 }
 
+/// What the searches of the faster loading in Game.dll found: each function to hook, null if the client lacks it, and the token tables
+/// with their indexes by hash, built during the search.
+struct FastLoadPlace {
+    BYTE* fieldLookup = nullptr;
+    BYTE* questTokens = nullptr;
+    const wchar_t** questTokenTable = nullptr;
+    const wchar_t** questTokenEnd = nullptr;
+    std::unordered_map<DWORD, int> questTokenIndex;
+    // the first token a hash cannot index, -1 if none
+    int questBadToken = -1;
+    BYTE* xmlTokens = nullptr;
+    const wchar_t* const* xmlTokenTable = nullptr;
+    const wchar_t* const* xmlTokenEnd = nullptr;
+    std::unordered_map<DWORD, int> xmlTokenIndex;
+    int xmlBadToken = -1;
+    BYTE* heapReport = nullptr;
+    BYTE* mapLowerBound = nullptr;
+};
+
 /// The lookup loop: mov rdx, [rax+8]; mov rcx, (name); call [_wcsicmp]; test eax, eax; jz found; ...; shl rax, 5; ...; cmp dword ptr [rax], 0; jnz loop
-static void HookFieldLookup(HMODULE game) {
+static void FindFieldLookup(HMODULE game, FastLoadPlace& place) {
     for (BYTE* loop : FindAllPatterns(game, "48 8B 50 08 ?? 8B ?? FF 15 ?? ?? ?? ?? 85 C0 74")) {
         BYTE* shift = nullptr;
         for (BYTE* p = loop + 17; p < loop + 0x30; p++) {
@@ -1237,19 +1405,25 @@ static void HookFieldLookup(HMODULE game) {
             }
         }
         BYTE* function = end ? FunctionStart(loop) : nullptr;
-        if (!function) {
-            continue;
+        if (function) {
+            place.fieldLookup = function;
+            return;
         }
-        s_game = game;
-        s_gameEnd = (BYTE*)game + ModuleImageSize(game);
-        s_fieldIndex = new std::unordered_map<const DWORD*, FieldIndex*>();
-        real_SetField = (SetField_t)function;
-        AttachHook(&(PVOID&)real_SetField, zzSetField);
-        ModsLog("fast start: field lookup at %p", function);
+    }
+}
+
+static void ApplyFieldLookup(HMODULE game, const FastLoadPlace& place) {
+    if (!place.fieldLookup) {
+        ModsLog("fast start: field lookup not in this client, only 4.x has it");
+        ReportStatus(InstallStatus::NotApplicable);
         return;
     }
-    ModsLog("fast start: field lookup not in this client, only 4.x has it");
-    ReportStatus(InstallStatus::NotApplicable);
+    s_game = game;
+    s_gameEnd = (BYTE*)game + ModuleImageSize(game);
+    s_fieldIndex = new std::unordered_map<const DWORD*, FieldIndex*>();
+    real_SetField = (SetField_t)place.fieldLookup;
+    AttachHook(&(PVOID&)real_SetField, zzSetField);
+    ModsLog("fast start: field lookup at %p", place.fieldLookup);
 }
 
 // 5.x clients write a report of the table heap after loading each table: they walk the whole heap with HeapWalk and print every
@@ -1272,18 +1446,21 @@ static void __fastcall zzHeapReport(HANDLE heap, HANDLE file, char flag, const c
 }
 
 /// lea rdx, "\t+ LBlock %03d : %p ~ %p (%d k)" in the report function
-static void HookHeapReport(HMODULE game) {
+static void FindHeapReport(HMODULE game, FastLoadPlace& place) {
     static const char LINE[] = "\t+ LBlock %03d : %p ~ %p (%d k)";
     const void* text = FindBytes(game, LINE, sizeof(LINE));
     BYTE* lea = text ? FindLeaTo(game, text) : nullptr;
-    BYTE* function = lea ? FunctionStart(lea) : nullptr;
-    if (!function) {
+    place.heapReport = lea ? FunctionStart(lea) : nullptr;
+}
+
+static void ApplyHeapReport(const FastLoadPlace& place) {
+    if (!place.heapReport) {
         ModsLog("fast start: heap report not found");
         return;
     }
-    real_HeapReport = (HeapReport_t)function;
+    real_HeapReport = (HeapReport_t)place.heapReport;
     AttachHook(&(PVOID&)real_HeapReport, zzHeapReport);
-    ModsLog("fast start: heap report at %p", function);
+    ModsLog("fast start: heap report at %p", place.heapReport);
 }
 
 // 5.x clients look keys up in a std::map<int, ...> while loading the tables with std::lower_bound over its iterators, which finds
@@ -1322,17 +1499,20 @@ static MapNode** __fastcall zzLowerBound(MapNode** result, MapNode* first, MapNo
 }
 
 /// The middle of the range: call (advance); mov rcx, [rsp+40h]; cmp [rcx+1Ch], ebp; jge
-static void HookMapLowerBound(HMODULE game) {
+static void FindMapLowerBound(HMODULE game, FastLoadPlace& place) {
     BYTE* middle = FindPattern(game, "E8 ?? ?? ?? ?? 48 8B 4C 24 40 39 69 1C 7D");
-    BYTE* function = middle ? FunctionStart(middle) : nullptr;
-    if (!function) {
+    place.mapLowerBound = middle ? FunctionStart(middle) : nullptr;
+}
+
+static void ApplyMapLowerBound(const FastLoadPlace& place) {
+    if (!place.mapLowerBound) {
         ModsLog("fast start: map lookup not in this client, only 5.x has it");
         ReportStatus(InstallStatus::NotApplicable);
         return;
     }
-    real_LowerBound = (LowerBound_t)function;
+    real_LowerBound = (LowerBound_t)place.mapLowerBound;
     AttachHook(&(PVOID&)real_LowerBound, zzLowerBound);
-    ModsLog("fast start: map lookup at %p", function);
+    ModsLog("fast start: map lookup at %p", place.mapLowerBound);
 }
 
 /// Once CrySystem is loaded, which needs the runtime (VC 8 in 4.x, VC 12 in 5.x), before it opens the .pak archives.
@@ -1396,31 +1576,44 @@ extern "C" int QuestTokenIndex(const wchar_t* name) {
 
 /// mov ebx, ebp; lea r12, <tokens>; lea r14, <end>; nops; loop: mov rdx, [r12]; mov rcx, r13; call [_wcsicmp]; test eax, eax; jz found;
 /// add r12, 8; add ebx, 1; cmp r12, r14; jl loop
-static void HookQuestTokens(HMODULE game) {
+static void FindQuestTokens(HMODULE game, FastLoadPlace& place) {
     BYTE* p = FindPattern(game, "8B DD 4C 8D 25 ?? ?? ?? ?? 4C 8D 35 ?? ?? ?? ?? 66 66 90 66 66 66 90 49 8B 14 24 49 8B CD FF 15 ?? ?? ?? ?? 85 C0 74 ?? 49 83 C4 08 83 C3 01 4D 3B E6 7C E3");
+    if (!p) {
+        return;
+    }
+    place.questTokens = p;
+    const wchar_t** tokens = place.questTokenTable = (const wchar_t**)ResolveRip(p + 5, p + 9);
+    const wchar_t** end = place.questTokenEnd = (const wchar_t**)ResolveRip(p + 12, p + 16);
+    for (const wchar_t** token = tokens; token < end; token++) {
+        DWORD hash;
+        if (!*token || !FoldedHash(*token, hash)) {
+            place.questBadToken = (int)(token - tokens);
+            place.questTokenIndex.clear();
+            return;
+        }
+        // the first of equal names, as the loop finds it
+        place.questTokenIndex.emplace(hash, (int)(token - tokens));
+    }
+}
+
+static void ApplyQuestTokens(FastLoadPlace& place) {
+    BYTE* p = place.questTokens;
     if (!p) {
         ModsLog("fast start: quest tokens not in this client, only 4.x has them");
         ReportStatus(InstallStatus::NotApplicable);
         return;
     }
-    const wchar_t** tokens = (const wchar_t**)ResolveRip(p + 5, p + 9);
-    const wchar_t** end = (const wchar_t**)ResolveRip(p + 12, p + 16);
-    for (const wchar_t** token = tokens; token < end; token++) {
-        DWORD hash;
-        if (!*token || !FoldedHash(*token, hash)) {
-            ModsLog("fast start: quest token %d not in ASCII", (int)(token - tokens));
-            s_questTokens.clear();
-            return;
-        }
-        // the first of equal names, as the loop finds it
-        s_questTokens.emplace(hash, (int)(token - tokens));
+    if (place.questBadToken >= 0) {
+        ModsLog("fast start: quest token %d not in ASCII", place.questBadToken);
+        return;
     }
-    g_questTokenTable = (UINT64)tokens;
-    g_questTokenEnd = (UINT64)end;
+    s_questTokens = std::move(place.questTokenIndex);
+    g_questTokenTable = (UINT64)place.questTokenTable;
+    g_questTokenEnd = (UINT64)place.questTokenEnd;
     g_questTokenLoop = (UINT64)(p + 23);
     static PVOID patched = p + 2;
     AttachHook(&patched, QuestTokenStub);
-    ModsLog("fast start: quest tokens at %p, %d of them", p, (int)(end - tokens));
+    ModsLog("fast start: quest tokens at %p, %d of them", p, (int)(place.questTokenEnd - place.questTokenTable));
 }
 
 // 5.x clients turn every name in the XML of a table into its number with XML_GetToken, which compares it with one of some 4500 tokens
@@ -1442,41 +1635,63 @@ static int __fastcall zzXmlToken(const wchar_t* name) {
 
 /// push rsi; sub rsp, 20h; mov rsi, rcx; test rcx, rcx; jnz ...; ...; lea rbx, <tokens>; lea rbp, <end>; loop: mov rdx, [rbx];
 /// mov rcx, rsi; call [_wcsicmp]; ...; the report of an unknown token is the only use of its text
-static void HookXmlTokens(HMODULE game) {
+static void FindXmlTokens(HMODULE game, FastLoadPlace& place) {
     static const wchar_t TEXT[] = L"%s, XML_GetToken() : undefined token \"%s\"";
     const void* text = FindBytes(game, TEXT, sizeof(TEXT));
     BYTE* lea = text ? FindLeaTo(game, text) : nullptr;
     BYTE* p = lea ? FunctionStart(lea) : nullptr;
     if (!p || memcmp(p, "\x40\x56\x48\x83\xEC\x20\x48\x8B\xF1\x48\x85\xC9", 12) != 0 || memcmp(p + 0x2A, "\x48\x8D\x1D", 3) != 0
         || memcmp(p + 0x31, "\x48\x8D\x2D", 3) != 0) {
+        return;
+    }
+    place.xmlTokens = p;
+    const wchar_t* const* tokens = place.xmlTokenTable = (const wchar_t* const*)ResolveRip(p + 0x2D, p + 0x31);
+    const wchar_t* const* end = place.xmlTokenEnd = (const wchar_t* const*)ResolveRip(p + 0x34, p + 0x38);
+    for (const wchar_t* const* token = tokens; token < end; token++) {
+        DWORD hash;
+        if (!*token || !FoldedHash(*token, hash)) {
+            place.xmlBadToken = (int)(token - tokens);
+            place.xmlTokenIndex.clear();
+            return;
+        }
+        // the first of equal names, as the loop finds it
+        place.xmlTokenIndex.emplace(hash, (int)(token - tokens));
+    }
+}
+
+static void ApplyXmlTokens(FastLoadPlace& place) {
+    BYTE* p = place.xmlTokens;
+    if (!p) {
         ModsLog("fast start: XML tokens not in this client, only 5.x has them");
         ReportStatus(InstallStatus::NotApplicable);
         return;
     }
-    const wchar_t* const* tokens = (const wchar_t* const*)ResolveRip(p + 0x2D, p + 0x31);
-    const wchar_t* const* end = (const wchar_t* const*)ResolveRip(p + 0x34, p + 0x38);
-    for (const wchar_t* const* token = tokens; token < end; token++) {
-        DWORD hash;
-        if (!*token || !FoldedHash(*token, hash)) {
-            ModsLog("fast start: XML token %d not in ASCII", (int)(token - tokens));
-            s_xmlTokenIndex.clear();
-            return;
-        }
-        // the first of equal names, as the loop finds it
-        s_xmlTokenIndex.emplace(hash, (int)(token - tokens));
+    if (place.xmlBadToken >= 0) {
+        ModsLog("fast start: XML token %d not in ASCII", place.xmlBadToken);
+        return;
     }
-    s_xmlTokens = tokens;
+    s_xmlTokenIndex = std::move(place.xmlTokenIndex);
+    s_xmlTokens = place.xmlTokenTable;
     real_XmlToken = (XmlToken_t)p;
     AttachHook(&(PVOID&)real_XmlToken, zzXmlToken);
-    ModsLog("fast start: XML tokens at %p, %d of them", p, (int)(end - tokens));
+    ModsLog("fast start: XML tokens at %p, %d of them", p, (int)(place.xmlTokenEnd - place.xmlTokenTable));
 }
 
 void InstallFastLoad(HMODULE game) {
-    HookFieldLookup(game);
-    HookQuestTokens(game);
-    HookXmlTokens(game);
-    HookHeapReport(game);
-    HookMapLowerBound(game);
+    FastLoadPlace place;
+    {
+        LocatePhase phase;
+        FindFieldLookup(game, place);
+        FindQuestTokens(game, place);
+        FindXmlTokens(game, place);
+        FindHeapReport(game, place);
+        FindMapLowerBound(game, place);
+    }
+    ApplyFieldLookup(game, place);
+    ApplyQuestTokens(place);
+    ApplyXmlTokens(place);
+    ApplyHeapReport(place);
+    ApplyMapLowerBound(place);
 }
 
 // A running client deletes sc_renew_local.dat and sets NormalStop=0 in data\dump\config.ini, and puts both back when it closes normally.
@@ -1831,10 +2046,24 @@ void InstallFastStart() {
     }
 }
 
+namespace {
+
+/// The timers of the logo before the login screen and of the picture shown on quitting, three each, all set to 0.
+struct LogoTimers {
+    BYTE* startLogo = nullptr;
+    BYTE* ending = nullptr;
+    std::vector<CodePatch> patches;
+};
+
+void PlanZero(LogoTimers& timers, BYTE* at) {
+    static const DWORD ZERO = 0;
+    timers.patches.push_back(PlanPatch(at, &ZERO, sizeof(ZERO)));
+}
+
 /// The logo before the login screen fades in until 750 ms, stays until 2250 ms and fades out until 3000 ms; only then the login
 /// screen starts to load: cmp reg, 2EEh; ja ...; cmp reg, 8CAh; ja ...; mov eax, 0BB8h; cmp reg, eax; ja login
 /// All three become 0, so the login screen follows on the next frame.
-static void SkipStartLogo(HMODULE game) {
+void FindStartLogo(HMODULE game, LogoTimers& timers) {
     for (BYTE* fadeIn : FindAllPatterns(game, "81 ?? EE 02 00 00 77")) {
         BYTE* hold = nullptr;
         BYTE* fadeOut = nullptr;
@@ -1849,36 +2078,61 @@ static void SkipStartLogo(HMODULE game) {
         if (!fadeOut) {
             continue;
         }
-        DWORD zero = 0;
-        PatchMemory(fadeIn + 2, &zero, sizeof(zero));
-        PatchMemory(hold, &zero, sizeof(zero));
-        PatchMemory(fadeOut, &zero, sizeof(zero));
-        ModsLog("fast start: logo timer at %p", fadeIn);
+        timers.startLogo = fadeIn;
+        PlanZero(timers, fadeIn + 2);
+        PlanZero(timers, hold);
+        PlanZero(timers, fadeOut);
         return;
     }
-    ModsLog("fast start: logo timer not found");
 }
 
 /// The picture shown on quitting fades in until 1000 ms, stays until 4000 ms and fades out until 5000 ms; only then the client closes:
 /// cmp eax, 3E8h; jbe ...; cmp eax, 0FA0h; ja ...; (the full colour); mov ecx, 1388h; cmp eax, ecx; ja close
 /// All three become 0 as well.
-static void SkipEndingPicture(HMODULE game) {
+void FindEndingPicture(HMODULE game, LogoTimers& timers) {
     for (BYTE* ending : FindAllPatterns(game, "3D E8 03 00 00 76 ?? 3D A0 0F 00 00 77")) {
         for (BYTE* p = ending + 14; p < ending + 0x40; p++) {
             if (p[0] == 0xB9 && *(DWORD*)(p + 1) == 5000 && p[5] == 0x3B && p[6] == 0xC1 && p[7] == 0x77) {
-                DWORD zero = 0;
-                PatchMemory(ending + 1, &zero, sizeof(zero));
-                PatchMemory(ending + 8, &zero, sizeof(zero));
-                PatchMemory(p + 1, &zero, sizeof(zero));
-                ModsLog("fast start: ending timer at %p", ending);
+                timers.ending = ending;
+                PlanZero(timers, ending + 1);
+                PlanZero(timers, ending + 8);
+                PlanZero(timers, p + 1);
                 return;
             }
         }
     }
-    ModsLog("fast start: ending timer not found");
 }
 
+LogoTimers LocateLogoTimers(HMODULE game) {
+    LogoTimers timers;
+    FindStartLogo(game, timers);
+    FindEndingPicture(game, timers);
+    return timers;
+}
+
+void ApplyLogoTimers(const LogoTimers& timers) {
+    // the start logo's changes come first when it was found
+    size_t i = 0;
+    if (timers.startLogo) {
+        for (; i < 3; i++) {
+            ApplyPatch(timers.patches[i]);
+        }
+        ModsLog("fast start: logo timer at %p", timers.startLogo);
+    } else {
+        ModsLog("fast start: logo timer not found");
+    }
+    if (timers.ending) {
+        for (; i < timers.patches.size(); i++) {
+            ApplyPatch(timers.patches[i]);
+        }
+        ModsLog("fast start: ending timer at %p", timers.ending);
+    } else {
+        ModsLog("fast start: ending timer not found");
+    }
+}
+
+} // namespace
+
 void InstallSkipLogo(HMODULE game) {
-    SkipStartLogo(game);
-    SkipEndingPicture(game);
+    LocateThenApply(game, LocateLogoTimers, ApplyLogoTimers);
 }

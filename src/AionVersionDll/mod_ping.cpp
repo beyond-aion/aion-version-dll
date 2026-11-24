@@ -224,9 +224,20 @@ int GetDisplayedPing() {
 static const BYTE BUILDER_START[] = { 0x40, 0x53, 0x48, 0x81, 0xEC };
 static const wchar_t PING_RESULT[] = L"ping result for %s(%d) : %d milisecond";
 
+namespace {
+
+struct Place {
+    BYTE* response = nullptr; // the handler of the ping response
+    BYTE* request = nullptr;  // the builder of the request
+    void* owner = nullptr;    // the object that holds the request state, in 3.9 and 5.x
+    int stateOffset = -1;     // where in it the send time sits
+    BYTE* dispatch = nullptr; // the packet dispatch that calls the handler
+};
+
 /// The request builder is the call in the response handler whose target has the shape of a builder for a packet without a body:
 /// push rbx; sub rsp, imm32; ... the packet size 7 stored directly (mov word ptr [rsp+x], 7) or through a register (mov r32, 7)
-static SendPingRequest_t FindRequestBuilder(HMODULE game, BYTE* handler) {
+void FindRequestBuilder(HMODULE game, Place& place) {
+    BYTE* handler = place.response;
     for (BYTE* p = handler; p < handler + 0x400; p++) {
         if (p[0] != 0xE8) {
             continue;
@@ -241,31 +252,43 @@ static SendPingRequest_t FindRequestBuilder(HMODULE game, BYTE* handler) {
             if (storesSize || loadsSize) {
                 // 3.9 and 5.x pass the object that holds the request state: lea rcx, [owner]
                 if (p[-7] == 0x48 && p[-6] == 0x8D && p[-5] == 0x0D) {
-                    s_pingOwner = ResolveRip(p - 4, p);
+                    place.owner = ResolveRip(p - 4, p);
                     // the count is compared first, cmp [rcx+count], edx in 5.x or cmp dword ptr [rcx+count], 0 in 3.9; the send
                     // time sits right before it
                     for (BYTE* r = target; r < target + 0x40; r++) {
                         if ((r[0] == 0x39 && (r[1] & 0xC7) == 0x81) || (r[0] == 0x83 && r[1] == 0xB9)) {
-                            s_pingStateOffset = *(INT32*)(r + 2) - 4;
+                            place.stateOffset = *(INT32*)(r + 2) - 4;
                             break;
                         }
                     }
                 }
-                return (SendPingRequest_t)target;
+                place.request = target;
+                return;
             }
         }
     }
-    return nullptr;
 }
 
-void InstallPing(HMODULE game) {
-    QueryPerformanceFrequency(&s_frequency);
+Place Locate(HMODULE game) {
+    Place place;
     const void* resultText = FindBytes(game, PING_RESULT, sizeof(PING_RESULT));
     BYTE* resultLea = resultText ? FindLeaTo(game, resultText) : nullptr;
-    real_OnPingResponse = resultLea ? (OnPingResponse_t)FunctionStart(resultLea) : nullptr;
-    sendPingRequest = real_OnPingResponse ? FindRequestBuilder(game, (BYTE*)real_OnPingResponse) : nullptr;
-    BYTE* dispatchCall = real_OnPingResponse ? FindCallTo(game, real_OnPingResponse) : nullptr;
-    real_DispatchPacket = dispatchCall ? (DispatchPacket_t)FunctionStart(dispatchCall) : nullptr;
+    place.response = resultLea ? FunctionStart(resultLea) : nullptr;
+    if (place.response) {
+        FindRequestBuilder(game, place);
+    }
+    BYTE* dispatchCall = place.response ? FindCallTo(game, place.response) : nullptr;
+    place.dispatch = dispatchCall ? FunctionStart(dispatchCall) : nullptr;
+    return place;
+}
+
+void Apply(const Place& place) {
+    QueryPerformanceFrequency(&s_frequency);
+    real_OnPingResponse = (OnPingResponse_t)place.response;
+    sendPingRequest = (SendPingRequest_t)place.request;
+    s_pingOwner = place.owner;
+    s_pingStateOffset = place.stateOffset;
+    real_DispatchPacket = (DispatchPacket_t)place.dispatch;
     ModsLog("ping: response=%p request=%p owner=%p+%d dispatch=%p", real_OnPingResponse, sendPingRequest, s_pingOwner, s_pingStateOffset,
         real_DispatchPacket);
     // a builder that takes the owner writes its state into it, so it cannot be called without knowing where that state is
@@ -279,4 +302,10 @@ void InstallPing(HMODULE game) {
     AttachHook(&(PVOID&)real_PeekMessageA, zzPeekMessageA);
     AttachHook(&(PVOID&)real_recv, zzrecv);
     AttachHook(&(PVOID&)real_send, zzsend);
+}
+
+} // namespace
+
+void InstallPing(HMODULE game) {
+    LocateThenApply(game, Locate, Apply);
 }

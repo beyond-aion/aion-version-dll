@@ -1,4 +1,4 @@
-#include "install_report.h"
+#include "code_patch.h"
 #include "module_load.h"
 
 static constexpr DWORD MAX_SIZE = 16384;
@@ -63,30 +63,46 @@ static BYTE* FindBound(HMODULE crySystem, DWORD lower, DWORD upper) {
     return found;
 }
 
-static void RaiseBound(HMODULE crySystem, const char* name, DWORD lower, DWORD upper) {
-    BYTE* bound = FindBound(crySystem, lower, upper);
-    ReportSearch(bound ? 1 : 0);
+namespace {
+
+/// The upper bounds of the width and the height, each with its stored value kept.
+struct Bounds {
+    CodePatch width;
+    CodePatch height;
+};
+
+Bounds LocateBounds(HMODULE crySystem) {
+    Bounds bounds;
+    BYTE* width = FindBound(crySystem, 800, 2560);
+    ReportSearch(width ? 1 : 0);
+    BYTE* height = FindBound(crySystem, 600, 1920);
+    ReportSearch(height ? 1 : 0);
+    bounds.width = PlanPatch(width, &MAX_SIZE, sizeof(MAX_SIZE));
+    bounds.height = PlanPatch(height, &MAX_SIZE, sizeof(MAX_SIZE));
+    return bounds;
+}
+
+void RaiseBound(const CodePatch& bound, const char* name) {
     if (!bound) {
         MODULE_LOG("fullscreen fix: %s bound not found", name);
         return;
     }
-    DWORD oldProtect;
-    if (!VirtualProtect(bound, sizeof(MAX_SIZE), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-        ReportWrite(bound, false);
-        return;
+    if (ApplyPatch(bound)) {
+        MODULE_LOG("fullscreen fix: %s bound at %p, %lu -> %lu", name, bound.at, *(const DWORD*)bound.expected, MAX_SIZE);
     }
-    *(DWORD*)bound = MAX_SIZE;
-    VirtualProtect(bound, sizeof(MAX_SIZE), oldProtect, &oldProtect);
-    FlushInstructionCache(GetCurrentProcess(), bound, sizeof(MAX_SIZE));
-    ReportWrite(bound, true);
-    MODULE_LOG("fullscreen fix: %s bound at %p, %lu -> %lu", name, bound, upper, MAX_SIZE);
 }
 
-static void RaiseBounds(HMODULE crySystem) {
-    InstallScope scope("fullscreen_fix");
-    RaiseBound(crySystem, "width", 800, 2560);
-    RaiseBound(crySystem, "height", 600, 1920);
+void RaiseBounds(const Bounds& bounds) {
+    RaiseBound(bounds.width, "width");
+    RaiseBound(bounds.height, "height");
 }
+
+void InstallOnCrySystem(HMODULE crySystem) {
+    InstallScope scope("fullscreen_fix");
+    LocateThenApply(crySystem, LocateBounds, RaiseBounds);
+}
+
+} // namespace
 
 /// Without a DPI awareness of its own the client sees a screen scaled above 100 % as smaller than it is, renders that size and Windows
 /// stretches the frame over the screen, blurred. A DPI setting from the compatibility tab of aion.bin comes first: the client then has its
@@ -103,5 +119,5 @@ static void MakeDpiAware() {
 /// off by the stretch. CrySystem.dll is packed in some clients, so the bounds are raised once its entry point has unpacked it.
 void InstallFullscreenFix() {
     MakeDpiAware();
-    OnModuleLoad(L"CrySystem.dll", RaiseBounds, true);
+    OnModuleLoad(L"CrySystem.dll", InstallOnCrySystem, true);
 }

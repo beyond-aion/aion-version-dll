@@ -97,10 +97,28 @@ static void __fastcall zzThreadFree(void* p) {
     }
 }
 
+namespace {
+
+struct Place {
+    // CryMalloc, CryFree, CryRealloc, CryReallocSize, CryFreeSize, CryCalloc
+    BYTE* exports[6] = {};
+    bool exported = false;
+    BYTE* poolAlloc = nullptr;
+    BYTE* poolFree = nullptr;
+    BYTE* threadAlloc = nullptr;
+    BYTE* threadFree = nullptr;
+    // the pool for allocator objects, null unless all of the above were found and fit together
+    BYTE* pool = nullptr;
+    // the initial sizes of the pool's own heap
+    std::vector<CodePatch> heapSizes;
+};
+
+const char* const EXPORTS[] = { "CryMalloc", "CryFree", "CryRealloc", "CryReallocSize", "CryFreeSize", "CryCalloc" };
+
 /// The pool functions for an allocator object: mov r9, rcx; lea rcx, pool; jmp alloc, and test rdx, rdx; jz; mov r8, rcx; lea rcx, pool;
 /// then call free in 4.x, with a frame of its own, or jmp free in 5.x. The per-thread pool: both start by reading its TLS index and
-/// leaving when it is -1. Returns the pool.
-static BYTE* FindAllocators(HMODULE crySystem, bool quiet) {
+/// leaving when it is -1.
+void FindAllocators(HMODULE crySystem, Place& place) {
     BYTE* poolAlloc = FindPattern(crySystem, "4C 8B C9 48 8D 0D ?? ?? ?? ?? E9");
     BYTE* poolFree = FindPattern(crySystem, "48 83 EC 28 48 85 D2 74 ?? 4C 8B C1 48 8D 0D ?? ?? ?? ?? E8");
     BYTE* poolFreePool = poolFree ? ResolveRip(poolFree + 15, poolFree + 19) : nullptr;
@@ -110,37 +128,59 @@ static BYTE* FindAllocators(HMODULE crySystem, bool quiet) {
     BYTE* threadAlloc = FindPattern(crySystem, "40 53 48 83 EC 20 48 8B D9 8B 0D ?? ?? ?? ?? 83 F9 FF 75 ?? 33 C0");
     BYTE* threadFree = FindPattern(crySystem, "40 53 48 83 EC 20 48 8B D9 8B 0D ?? ?? ?? ?? 83 F9 FF 0F 84");
     threadFree = threadFree ? threadFree : FindPattern(crySystem, "40 53 48 83 EC 20 48 8B D9 8B 0D ?? ?? ?? ?? 83 F9 FF 74");
+    place.poolAlloc = poolAlloc;
+    place.poolFree = poolFree;
+    place.threadAlloc = threadAlloc;
+    place.threadFree = threadFree;
     BYTE* pool = poolAlloc ? ResolveRip(poolAlloc + 6, poolAlloc + 10) : nullptr;
-    if (!pool || pool != poolFreePool || !threadAlloc || !threadFree ||
-        ResolveRip(threadAlloc + 11, threadAlloc + 15) != ResolveRip(threadFree + 11, threadFree + 15)) {
-        if (!quiet) {
-            ModsLog("mimalloc: allocators not found (%p %p %p %p)", poolAlloc, poolFree, threadAlloc, threadFree);
-        }
-        return nullptr;
+    if (pool && pool == poolFreePool && threadAlloc && threadFree &&
+        ResolveRip(threadAlloc + 11, threadAlloc + 15) == ResolveRip(threadFree + 11, threadFree + 15)) {
+        place.pool = pool;
     }
-    real_PoolAlloc = (PoolAlloc_t)poolAlloc;
-    real_PoolFree = (PoolFree_t)poolFree;
-    real_ThreadAlloc = (ThreadAlloc_t)threadAlloc;
-    real_ThreadFree = (ThreadFree_t)threadFree;
-    return pool;
 }
 
-static void HookAllocators(HMODULE crySystem, bool beforeEntry) {
-    if (real_CryMalloc) {
+Place Locate(HMODULE crySystem) {
+    Place place;
+    place.exported = true;
+    for (int i = 0; i < _countof(EXPORTS); i++) {
+        place.exports[i] = (BYTE*)GetProcAddress(crySystem, EXPORTS[i]);
+        place.exported &= place.exports[i] != nullptr;
+    }
+    if (!place.exported) {
+        return place;
+    }
+    FindAllocators(crySystem, place);
+    if (!place.pool) {
+        return place;
+    }
+    // The pool sets up its own growable heap with 296 MB committed at once, when CrySystem starts and in CryFlushAll: lea rcx, pool;
+    // xor r8d, r8d; mov edx, size; call init. It keeps only its own records there once hooked, so it starts with 1 MB.
+    for (BYTE* init : FindAllPatterns(crySystem, "48 8D 0D ?? ?? ?? ?? 45 33 C0 BA ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 15")) {
+        if (ResolveRip(init + 3, init + 7) == place.pool) {
+            static const DWORD INITIAL = 1 << 20;
+            place.heapSizes.push_back(PlanPatch(init + 11, &INITIAL, sizeof(INITIAL)));
+        }
+    }
+    return place;
+}
+
+void Apply(const Place& place, HMODULE crySystem, bool beforeEntry) {
+    if (!place.pool) {
+        if (place.exported && !beforeEntry) {
+            ModsLog("mimalloc: allocators not found (%p %p %p %p)", place.poolAlloc, place.poolFree, place.threadAlloc, place.threadFree);
+        }
         return;
     }
-    real_CryMalloc = (CryMalloc_t)GetProcAddress(crySystem, "CryMalloc");
-    real_CryFree = (CryFree_t)GetProcAddress(crySystem, "CryFree");
-    real_CryRealloc = (CryRealloc_t)GetProcAddress(crySystem, "CryRealloc");
-    real_CryReallocSize = (CryReallocSize_t)GetProcAddress(crySystem, "CryReallocSize");
-    real_CryFreeSize = (CryFreeSize_t)GetProcAddress(crySystem, "CryFreeSize");
-    real_CryCalloc = (CryCalloc_t)GetProcAddress(crySystem, "CryCalloc");
-    BYTE* pool = real_CryMalloc && real_CryFree && real_CryRealloc && real_CryReallocSize && real_CryFreeSize && real_CryCalloc
-        ? FindAllocators(crySystem, beforeEntry) : nullptr;
-    if (!pool) {
-        real_CryMalloc = nullptr;
-        return;
-    }
+    real_CryMalloc = (CryMalloc_t)place.exports[0];
+    real_CryFree = (CryFree_t)place.exports[1];
+    real_CryRealloc = (CryRealloc_t)place.exports[2];
+    real_CryReallocSize = (CryReallocSize_t)place.exports[3];
+    real_CryFreeSize = (CryFreeSize_t)place.exports[4];
+    real_CryCalloc = (CryCalloc_t)place.exports[5];
+    real_PoolAlloc = (PoolAlloc_t)place.poolAlloc;
+    real_PoolFree = (PoolFree_t)place.poolFree;
+    real_ThreadAlloc = (ThreadAlloc_t)place.threadAlloc;
+    real_ThreadFree = (ThreadFree_t)place.threadFree;
     if (beforeEntry) {
         BYTE* targets[] = { (BYTE*)real_CryMalloc, (BYTE*)real_CryFree, (BYTE*)real_CryRealloc, (BYTE*)real_CryReallocSize, (BYTE*)real_CryFreeSize,
             (BYTE*)real_CryCalloc, (BYTE*)real_PoolAlloc, (BYTE*)real_PoolFree, (BYTE*)real_ThreadAlloc, (BYTE*)real_ThreadFree };
@@ -159,18 +199,13 @@ static void HookAllocators(HMODULE crySystem, bool beforeEntry) {
     AttachHook(&(PVOID&)real_ThreadAlloc, zzThreadAlloc);
     AttachHook(&(PVOID&)real_ThreadFree, zzThreadFree);
     LONG error = DetourTransactionCommit();
-    // The pool sets up its own growable heap with 296 MB committed at once, when CrySystem starts and in CryFlushAll: lea rcx, pool;
-    // xor r8d, r8d; mov edx, size; call init. It keeps only its own records there now, so it starts with 1 MB; hooked too late for that,
-    // what it has not used of the heap goes back.
+    // the pool's heap starts small from now on; hooked too late for that, what it has not used of the heap goes back
     int heaps = 0;
     if (error == NO_ERROR) {
-        for (BYTE* init : FindAllPatterns(crySystem, "48 8D 0D ?? ?? ?? ?? 45 33 C0 BA ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 15")) {
-            DWORD initial = 1 << 20;
-            if (ResolveRip(init + 3, init + 7) == pool && PatchMemory(init + 11, &initial, sizeof(initial))) {
-                heaps++;
-            }
+        for (const CodePatch& size : place.heapSizes) {
+            heaps += ApplyPatch(size);
         }
-        HANDLE heap = beforeEntry ? nullptr : *(HANDLE*)(pool + 8);
+        HANDLE heap = beforeEntry ? nullptr : *(HANDLE*)(place.pool + 8);
         if (heap) {
             HeapCompact(heap, 0);
         }
@@ -178,12 +213,24 @@ static void HookAllocators(HMODULE crySystem, bool beforeEntry) {
     ModsLog("mimalloc: allocators at %p %s its entry point: %ld, %d pool heaps", crySystem, beforeEntry ? "before" : "after", error, heaps);
 }
 
-static void HookBeforeEntry(HMODULE crySystem) {
+void HookAllocators(HMODULE crySystem, bool beforeEntry) {
+    if (real_CryMalloc) {
+        return;
+    }
+    Place place;
+    {
+        LocatePhase phase;
+        place = Locate(crySystem);
+    }
+    Apply(place, crySystem, beforeEntry);
+}
+
+void HookBeforeEntry(HMODULE crySystem) {
     InstallScope scope("mimalloc");
     HookAllocators(crySystem, true);
 }
 
-static void HookAfterEntry(HMODULE crySystem) {
+void HookAfterEntry(HMODULE crySystem) {
     InstallScope scope("mimalloc");
     if (s_hookedEarly[0]) {
         int lost = 0;
@@ -199,6 +246,8 @@ static void HookAfterEntry(HMODULE crySystem) {
     }
     HookAllocators(crySystem, false);
 }
+
+} // namespace
 
 void InstallMimalloc() {
     OnModuleLoad(L"CrySystem.dll", HookBeforeEntry, false);

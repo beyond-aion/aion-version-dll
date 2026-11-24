@@ -637,44 +637,57 @@ void AddUiXmlEdit(const wchar_t* dialogName, void (*apply)(XmlNode& dialog)) {
     s_edits.push_back({ dialogName, apply });
 }
 
+namespace {
+
+struct Place {
+    BYTE* loader = nullptr;
+    BYTE* parser = nullptr;
+    void** allocator = nullptr;
+    DWORD allocateSlot = 0;
+    DWORD pakSlot = 0;
+    // whether the loader makes the pak calls ReadGameFile makes, so that text files can be read the same way
+    bool textFiles = false;
+};
+
 /// The XML loader reads the whole file through the pak system into a buffer from the game's allocator and, for the binary
 /// format, hands it to the parser right after checking the first byte: cmp byte ptr [buffer], 80h; jnz; ...; call parser.
 /// The allocator is the object whose virtual allocate gives that buffer, with free in the next slot: mov rcx, [rip+allocator];
 /// ... call [rax+allocate] (390h in 4.x, 3A8h in 5.x). Before it, the loader gets the pak system from the same object the
 /// same way (190h, 1A8h).
-bool InstallUiXml(HMODULE game) {
+Place Locate(HMODULE game) {
+    Place place;
     // followed by a line break in 5.x clients
     static const char CANNOT_OPEN[] = "can not open file %s";
     const void* message = FindBytes(game, CANNOT_OPEN, sizeof(CANNOT_OPEN) - 1);
     BYTE* reference = message ? FindLeaTo(game, message) : nullptr;
     BYTE* loader = reference ? FunctionStart(reference) : nullptr;
+    place.loader = loader;
     // the checks and calls below sit in chained ranges after the primary one
     BYTE* end = loader ? FunctionBodyEnd(loader, 0x1000) : nullptr;
-    BYTE* parser = nullptr;
     for (int pass = 0; pass < 2; pass++) {
         for (BYTE* p = loader; p && p + 8 < end; p++) {
-            if (p[0] != 0x48 || p[1] != 0x8B || p[2] != 0x0D || (pass == 1 && (void**)ResolveRip(p + 3, p + 7) != s_allocator)) {
+            if (p[0] != 0x48 || p[1] != 0x8B || p[2] != 0x0D || (pass == 1 && (void**)ResolveRip(p + 3, p + 7) != place.allocator)) {
                 continue;
             }
             for (BYTE* q = p + 7; q < p + 0x20; q++) {
                 DWORD slot = q[0] == 0xFF && q[1] == 0x90 ? *(DWORD*)(q + 2) : 0;
-                if (pass == 0 && slot >= 0x300 && slot < 0x400 && !s_allocator) {
-                    s_allocator = (void**)ResolveRip(p + 3, p + 7);
-                    s_allocateSlot = slot;
+                if (pass == 0 && slot >= 0x300 && slot < 0x400 && !place.allocator) {
+                    place.allocator = (void**)ResolveRip(p + 3, p + 7);
+                    place.allocateSlot = slot;
                     break;
                 }
-                if (pass == 1 && slot >= 0x100 && slot < 0x300 && !s_pakSlot) {
-                    s_pakSlot = slot;
+                if (pass == 1 && slot >= 0x100 && slot < 0x300 && !place.pakSlot) {
+                    place.pakSlot = slot;
                     break;
                 }
             }
         }
     }
-    for (BYTE* p = loader; p && p + 5 < end && !parser; p++) {
+    for (BYTE* p = loader; p && p + 5 < end && !place.parser; p++) {
         if (p[0] == 0x80 && (p[1] & 0xC0) == 0 && p[2] == 0x80 && p[3] == 0x75) {
             for (BYTE* q = p + 5; q < p + 0x30; q++) {
                 if (q[0] == 0xE8) {
-                    parser = ResolveRip(q + 1, q + 5);
+                    place.parser = ResolveRip(q + 1, q + 5);
                     break;
                 }
             }
@@ -682,25 +695,42 @@ bool InstallUiXml(HMODULE game) {
     }
     // the file calls ReadGameFile makes on the pak system: open, seek, tell, read, close, as call [reg+slot]
     static const BYTE PAK_SLOTS[] = { 0x78, 0x98, 0xA0, 0x80, 0xA8 };
-    s_textFiles = loader && s_pakSlot;
-    for (int i = 0; i < _countof(PAK_SLOTS) && s_textFiles; i++) {
+    place.textFiles = loader && place.pakSlot;
+    for (int i = 0; i < _countof(PAK_SLOTS) && place.textFiles; i++) {
         bool found = false;
         for (BYTE* p = loader; p + 6 < end && !found; p++) {
             BYTE mode = p[1] & 0xF8;
             found = p[0] == 0xFF && (p[1] & 7) != 4
                 && ((mode == 0x90 && *(DWORD*)(p + 2) == PAK_SLOTS[i]) || (mode == 0x50 && p[2] == PAK_SLOTS[i]));
         }
-        s_textFiles = found;
+        place.textFiles = found;
     }
-    ModsLog("ui xml: loader=%p parser=%p allocator=%p+%X pak=+%X text files=%d", loader, parser, s_allocator, s_allocateSlot, s_pakSlot,
-        s_textFiles);
-    if (!loader || !parser || !s_allocator) {
-        return false;
+    return place;
+}
+
+bool s_installed = false;
+
+void Apply(const Place& place) {
+    s_allocator = place.allocator;
+    s_allocateSlot = place.allocateSlot;
+    s_pakSlot = place.pakSlot;
+    s_textFiles = place.textFiles;
+    ModsLog("ui xml: loader=%p parser=%p allocator=%p+%X pak=+%X text files=%d", place.loader, place.parser, s_allocator, s_allocateSlot,
+        s_pakSlot, s_textFiles);
+    if (!place.loader || !place.parser || !s_allocator) {
+        return;
     }
-    real_LoadXmlFile = (LoadXmlFile_t)loader;
-    real_ParseBinaryXml = (ParseBinaryXml_t)parser;
+    real_LoadXmlFile = (LoadXmlFile_t)place.loader;
+    real_ParseBinaryXml = (ParseBinaryXml_t)place.parser;
     AttachHook(&(PVOID&)real_LoadXmlFile, zzLoadXmlFile);
     AttachHook(&(PVOID&)real_ParseBinaryXml, zzParseBinaryXml);
     AttachHook(&(PVOID&)real_MultiByteToWideChar, zzMultiByteToWideChar);
-    return !s_edits.empty();
+    s_installed = true;
+}
+
+} // namespace
+
+bool InstallUiXml(HMODULE game) {
+    LocateThenApply(game, Locate, Apply);
+    return s_installed && !s_edits.empty();
 }

@@ -60,9 +60,62 @@ static int RowsFor(int columns, int count) {
     return (count + columns - 1) / columns;
 }
 
-static bool s_ownWindowsReady = false;
 static bool s_ownGridReady = false;
-static bool s_targetWindowReady = false;
+
+typedef void*(__fastcall* Construct_t)(BYTE* window);
+
+/// A call of a selector that gets the configured count: where it returns to, the buffer its window reads the picks from
+/// (nullptr: the caller's own, which has room), and the count.
+struct SelectRoute {
+    BYTE* returnTo;
+    BYTE* picks;
+    int count;
+};
+
+/// A window whose object grows by a buff and a debuff slot array of MAX_EFFECTS, which its update and init use instead of the
+/// client's arrays of 24.
+struct ExtendedWindow {
+    BYTE* vtable;
+    // where the factory's call of the constructor returns to; the constructor also builds the base of other windows
+    BYTE* createdAt;
+    // the client's size of the object, where the arrays start
+    DWORD slots;
+    int count;
+    bool buffs;
+    bool debuffs;
+    Construct_t realConstruct;
+};
+/// A window with more slots than the client's: its instance once the init ran, and its slots of each kind.
+struct SlotTable {
+    BYTE* vtable;
+    BYTE* window;
+    int count;
+    bool kinds[2];
+    BYTE* slots[2][MAX_EFFECTS];
+};
+/// What the searches of the buff count found, which the hooks use once it is installed.
+struct BuffCount {
+    bool ownWindowsReady = false;
+    bool targetWindowReady = false;
+    SelectRoute routes[4] = {};
+    int routeCount = 0;
+    // 4.x: the windows that grow, and the buffers of the target window's picks
+    ExtendedWindow windows[3] = {};
+    int windowCount = 0;
+    BYTE* targetPicks[2] = {};
+    // the slot lookup of the shared window init
+    DWORD findChildSlot = 0;
+    DWORD slotFlagOffset = 0;
+    DWORD slotFlag = 0;
+    int findChildFlags = 0;
+    // 5.x: the windows with slot tables of their own, and the client's slot arrays (buffs, debuffs) in the window and how many slots
+    // each has
+    SlotTable tables[3] = {};
+    int tableCount = 0;
+    DWORD arrays[2] = {};
+    int clientSlots[2] = {};
+};
+static BuffCount s_count;
 static constexpr int CLIENT_TARGET_COLUMNS = 10;
 // rows the client builds the own buff and debuff windows with
 static int s_ownRows[2] = { OWN_ROWS, OWN_ROWS };
@@ -101,7 +154,7 @@ static void ResizeOwnWindow(XmlNode& dialog, const wchar_t* slotName, int client
 
 /// The target window's file has 20 slots of each kind although the window fills up to 24, or the configured count.
 static void EditTargetWindow(XmlNode& dialog) {
-    int count = s_targetWindowReady ? TargetCount() : CLIENT_EFFECTS;
+    int count = s_count.targetWindowReady ? TargetCount() : CLIENT_EFFECTS;
     AddSlots(dialog, L"buff_item1", L"buff_item", 2, count);
     AddSlots(dialog, L"debuff_item1", L"debuff_item", 2, count);
 }
@@ -163,12 +216,26 @@ static __int64 __fastcall zzPlaceTargetBuffs(BYTE* window, WindowRect* rect) {
     return result;
 }
 
+/// Where the rows of the target's buffs go below the target of the target: the frame setter both windows share, the target's
+/// buffs' own placement and the method it asks whether the target of the target shows.
+struct AssistPlace {
+    BYTE* assistVtable = nullptr;
+    BYTE* setter = nullptr;
+    int slot = -1;
+    // the placement, null unless it is one of the target's buffs' own
+    BYTE* placeBuffs = nullptr;
+    DWORD isShownAt = 0;
+};
+
 /// The setter of a window's frame stores it at +68h and lets the window place it before and react after, two virtual calls one
 /// slot apart: call [reg+480h]; ...; call [reg+488h]. Both windows share it; the target's buffs place themselves below the target.
-static void InstallRowsBelowAssist(HMODULE game, BYTE* targetBuffVtable) {
-    static constexpr DWORD PLACE = 0x480;
-    static constexpr DWORD REACT = 0x488;
+static constexpr DWORD PLACE_SLOT = 0x480;
+static constexpr DWORD REACT_SLOT = 0x488;
+
+static AssistPlace LocateRowsBelowAssist(HMODULE game, BYTE* targetBuffVtable) {
+    AssistPlace place;
     BYTE* assistVtable = FindVtable(game, ".?AVDlgTargetAssist@@");
+    place.assistVtable = assistVtable;
     int slot = -1;
     for (int i = 40; assistVtable && targetBuffVtable && i < 80 && slot < 0; i++) {
         BYTE* setter = ((BYTE**)targetBuffVtable)[i];
@@ -179,39 +246,47 @@ static void InstallRowsBelowAssist(HMODULE game, BYTE* targetBuffVtable) {
         bool place = false, react = false;
         for (BYTE* p = setter; p + 6 <= end; p++) {
             if (p[0] == 0xFF && (p[1] & 0xF8) == 0x90 && (p[1] & 7) != 4) {
-                place |= *(DWORD*)(p + 2) == PLACE;
-                react |= *(DWORD*)(p + 2) == REACT;
+                place |= *(DWORD*)(p + 2) == PLACE_SLOT;
+                react |= *(DWORD*)(p + 2) == REACT_SLOT;
             }
         }
         slot = place && react ? i : -1;
     }
-    BYTE* placeBuffs = slot >= 0 ? ((BYTE**)targetBuffVtable)[PLACE / 8] : nullptr;
+    place.slot = slot;
+    place.setter = slot >= 0 ? ((BYTE**)targetBuffVtable)[slot] : nullptr;
+    BYTE* placeBuffs = slot >= 0 ? ((BYTE**)targetBuffVtable)[PLACE_SLOT / 8] : nullptr;
     // a placement of their own, not the one the target of the target has
-    bool own = placeBuffs && placeBuffs != ((BYTE**)assistVtable)[PLACE / 8] && InModule(game, placeBuffs, 1);
+    bool own = placeBuffs && placeBuffs != ((BYTE**)assistVtable)[PLACE_SLOT / 8] && InModule(game, placeBuffs, 1);
+    place.placeBuffs = own ? placeBuffs : nullptr;
     // the placement asks the target of the target whether it shows: call [reg+isShown]
-    for (BYTE* p = placeBuffs; own && p < placeBuffs + 0x100 && !s_isShownAt; p++) {
+    for (BYTE* p = placeBuffs; own && p < placeBuffs + 0x100 && !place.isShownAt; p++) {
         if (p[0] == 0xFF && (p[1] & 0xF8) == 0x90 && (p[1] & 7) != 4) {
-            s_isShownAt = *(DWORD*)(p + 2);
+            place.isShownAt = *(DWORD*)(p + 2);
         } else if (p[0] == 0xFF && (p[1] & 0xF8) == 0x50 && (p[1] & 7) != 4) {
-            s_isShownAt = p[2];
+            place.isShownAt = p[2];
         }
     }
-    ModsLog("buffs: target rows below the target of the target, frame setter slot %d, placement %p, shown +%X", slot, own ? placeBuffs : nullptr,
-        s_isShownAt);
-    if (!own || !s_isShownAt) {
+    return place;
+}
+
+static void ApplyRowsBelowAssist(const AssistPlace& place) {
+    ModsLog("buffs: target rows below the target of the target, frame setter slot %d, placement %p, shown +%X", place.slot, place.placeBuffs,
+        place.isShownAt);
+    if (!place.placeBuffs || !place.isShownAt) {
         return;
     }
-    s_assistVtable = assistVtable;
+    s_isShownAt = place.isShownAt;
+    s_assistVtable = place.assistVtable;
     s_windowRectAt = 0x68;
-    real_SetWindowRect = (SetWindowRect_t)((BYTE**)targetBuffVtable)[slot];
-    real_PlaceTargetBuffs = (PlaceWindow_t)placeBuffs;
+    real_SetWindowRect = (SetWindowRect_t)place.setter;
+    real_PlaceTargetBuffs = (PlaceWindow_t)place.placeBuffs;
     AttachHook(&(PVOID&)real_SetWindowRect, zzSetWindowRect);
     AttachHook(&(PVOID&)real_PlaceTargetBuffs, zzPlaceTargetBuffs);
 }
 
 /// The own windows get the slots of their kind up to the configured count.
 static void EditBuffWindow(XmlNode& dialog) {
-    if (s_ownWindowsReady) {
+    if (s_count.ownWindowsReady) {
         AddSlots(dialog, L"buff_item1", L"buff_item", 2, OwnCount());
     }
     if (s_ownGridReady) {
@@ -220,7 +295,7 @@ static void EditBuffWindow(XmlNode& dialog) {
 }
 
 static void EditDebuffWindow(XmlNode& dialog) {
-    if (s_ownWindowsReady) {
+    if (s_count.ownWindowsReady) {
         AddSlots(dialog, L"debuff_item1", L"debuff_item", 2, OwnCount());
     }
     if (s_ownGridReady) {
@@ -235,24 +310,15 @@ typedef int(__fastcall* SelectDebuffs_t)(BYTE* effects, int count, BYTE* picks, 
 static SelectBuffs_t real_SelectBuffs = nullptr;
 static SelectDebuffs_t real_SelectDebuffs = nullptr;
 
-/// A call of a selector that gets the configured count: where it returns to, the buffer its window reads the picks from
-/// (nullptr: the caller's own, which has room), and the count.
-struct SelectRoute {
-    BYTE* returnTo;
-    BYTE* picks;
-    int count;
-};
-static SelectRoute s_routes[4];
-static int s_routeCount = 0;
 static BYTE s_scratch[MAX_EFFECTS * ENTRY_SIZE_5X];
 
 /// The selectors pick up to 48 once patched; every caller gets as many as it can hold: the configured count for the windows
 /// routed here, 24 for the others. Mode 2 keeps the first ones, the other mode the last ones.
 static int Deliver(BYTE* picks, int picked, int mode, BYTE* returnTo) {
     const SelectRoute* route = nullptr;
-    for (int i = 0; i < s_routeCount; i++) {
-        if (s_routes[i].returnTo == returnTo) {
-            route = &s_routes[i];
+    for (int i = 0; i < s_count.routeCount; i++) {
+        if (s_count.routes[i].returnTo == returnTo) {
+            route = &s_count.routes[i];
         }
     }
     int kept = min(picked, route ? route->count : CLIENT_EFFECTS);
@@ -277,23 +343,25 @@ static int __fastcall zzSelectDebuffs(BYTE* effects, int count, BYTE* picks, __i
 
 // --- finding and patching ---
 
-struct Patch {
-    BYTE* at;
-    std::vector<BYTE> bytes;
-};
+// the changes a search plans, written together once everything they need was found
+typedef CodePatch Patch;
 
 static void Add(std::vector<Patch>& patches, BYTE* at, std::initializer_list<BYTE> bytes) {
-    patches.push_back({ at, bytes });
+    patches.push_back(PlanPatch(at, bytes.begin(), bytes.size()));
 }
 
 static void AddDword(std::vector<Patch>& patches, BYTE* at, DWORD value) {
-    BYTE* b = (BYTE*)&value;
-    Add(patches, at, { b[0], b[1], b[2], b[3] });
+    patches.push_back(PlanPatch(at, &value, sizeof(value)));
+}
+
+/// A slot of a window's method table pointed at a function of the mod.
+static void AddPointer(std::vector<Patch>& patches, BYTE* at, void* function) {
+    patches.push_back(PlanPatch(at, &function, sizeof(function)));
 }
 
 static void Apply(const std::vector<Patch>& patches) {
     for (const Patch& patch : patches) {
-        PatchMemory(patch.at, patch.bytes.data(), patch.bytes.size());
+        ApplyPatch(patch);
     }
 }
 
@@ -457,35 +525,14 @@ static BYTE* ConstructorOf(HMODULE game, BYTE* vtable) {
 
 // --- windows with more slots ---
 
-typedef void*(__fastcall* Construct_t)(BYTE* window);
 typedef void(__fastcall* InitWindow_t)(BYTE* window);
 typedef BYTE*(__fastcall* FindChild_t)(BYTE* window, const char* name, int flags);
 
-/// A window whose object grows by a buff and a debuff slot array of MAX_EFFECTS, which its update and init use instead of the
-/// client's arrays of 24.
-struct ExtendedWindow {
-    BYTE* vtable;
-    // where the factory's call of the constructor returns to; the constructor also builds the base of other windows
-    BYTE* createdAt;
-    // the client's size of the object, where the arrays start
-    DWORD slots;
-    int count;
-    bool buffs;
-    bool debuffs;
-    Construct_t realConstruct;
-};
-static ExtendedWindow s_windows[3];
-static int s_windowCount = 0;
 static InitWindow_t real_InitWindow = nullptr;
-static DWORD s_findChildSlot = 0;
-static DWORD s_slotFlagOffset = 0;
-static DWORD s_slotFlag = 0;
-static int s_findChildFlags = 0;
-static BYTE* s_targetPicks[2] = {};
 
 template <int I>
 static __declspec(noinline) void* __fastcall zzConstruct(BYTE* window) {
-    ExtendedWindow& extended = s_windows[I];
+    ExtendedWindow& extended = s_count.windows[I];
     void* result = extended.realConstruct(window);
     if ((BYTE*)_ReturnAddress() == extended.createdAt) {
         memset(window + extended.slots, 0, EXTRA_SLOTS_SIZE);
@@ -498,12 +545,12 @@ static void* (__fastcall* const CONSTRUCT_HOOKS[])(BYTE*) = { zzConstruct<0>, zz
 /// Looks the slots up like the client does for its 24 of each kind, into the arrays past the end of the window.
 static void __fastcall zzInitWindow(BYTE* window) {
     real_InitWindow(window);
-    for (int w = 0; w < s_windowCount; w++) {
-        const ExtendedWindow& extended = s_windows[w];
+    for (int w = 0; w < s_count.windowCount; w++) {
+        const ExtendedWindow& extended = s_count.windows[w];
         if (*(BYTE**)window != extended.vtable) {
             continue;
         }
-        FindChild_t findChild = *(FindChild_t*)(*(BYTE**)window + s_findChildSlot);
+        FindChild_t findChild = *(FindChild_t*)(*(BYTE**)window + s_count.findChildSlot);
         BYTE** slots = (BYTE**)(window + extended.slots);
         for (int kind = 0; kind < 2; kind++) {
             if (!(kind == 0 ? extended.buffs : extended.debuffs)) {
@@ -512,9 +559,9 @@ static void __fastcall zzInitWindow(BYTE* window) {
             for (int i = 0; i < MAX_EFFECTS; i++) {
                 char name[32];
                 sprintf_s(name, kind == 0 ? "buff_item%d" : "debuff_item%d", i + 1);
-                BYTE* slot = i < extended.count ? findChild(window, name, s_findChildFlags) : nullptr;
+                BYTE* slot = i < extended.count ? findChild(window, name, s_count.findChildFlags) : nullptr;
                 if (slot) {
-                    *(DWORD*)(slot + s_slotFlagOffset) = s_slotFlag;
+                    *(DWORD*)(slot + s_count.slotFlagOffset) = s_count.slotFlag;
                 }
                 slots[kind * MAX_EFFECTS + i] = slot;
             }
@@ -525,7 +572,7 @@ static void __fastcall zzInitWindow(BYTE* window) {
 
 /// The lookup in the shared window init: mov r8d, flags; mov rcx, reg; call [r11+slot] (4.x) or call [rax+slot] (5.x), then
 /// mov dword ptr [rax+offset], flag.
-static bool ParseInit(BYTE* init) {
+static bool ParseInit(BYTE* init, BuffCount& found) {
     BYTE* end = FunctionBodyEnd(init, 0x400);
     for (BYTE* p = init; p + 24 <= end; p++) {
         if (p[0] != 0x41 || p[1] != 0xB8 || p[6] != 0x48 || p[7] != 0x8B) {
@@ -533,12 +580,12 @@ static bool ParseInit(BYTE* init) {
         }
         BYTE* call = p[9] == 0x41 ? p + 10 : p + 9;
         if (call[0] == 0xFF && (call[1] == 0x93 || call[1] == 0x90)) {
-            s_findChildFlags = *(int*)(p + 2);
-            s_findChildSlot = *(DWORD*)(call + 2);
+            found.findChildFlags = *(int*)(p + 2);
+            found.findChildSlot = *(DWORD*)(call + 2);
             for (BYTE* q = p + 16; q < p + 0x30; q++) {
                 if (q[0] == 0xC7 && q[1] == 0x80) {
-                    s_slotFlagOffset = *(DWORD*)(q + 2);
-                    s_slotFlag = *(DWORD*)(q + 6);
+                    found.slotFlagOffset = *(DWORD*)(q + 2);
+                    found.slotFlag = *(DWORD*)(q + 6);
                     return true;
                 }
             }
@@ -566,7 +613,8 @@ static BYTE* FindFactoryCall(HMODULE game, BYTE* constructor) {
 }
 
 /// Grows the window's object by the slot arrays and gives its table the init that fills them. false if not recognised.
-static bool ExtendWindow(HMODULE game, BYTE* vtable, BYTE* init, int count, bool buffs, bool debuffs, std::vector<Patch>& patches) {
+static bool ExtendWindow(HMODULE game, BYTE* vtable, BYTE* init, int count, bool buffs, bool debuffs, std::vector<Patch>& patches,
+    BuffCount& found) {
     BYTE* constructor = ConstructorOf(game, vtable);
     BYTE* call = constructor ? FindFactoryCall(game, constructor) : nullptr;
     int initSlot = -1;
@@ -576,17 +624,15 @@ static bool ExtendWindow(HMODULE game, BYTE* vtable, BYTE* init, int count, bool
             break;
         }
     }
-    if (!call || initSlot < 0 || s_windowCount >= _countof(s_windows)) {
+    if (!call || initSlot < 0 || found.windowCount >= _countof(found.windows)) {
         ModsLog("buffs: window factory %p or init slot %d not found", call, initSlot);
         return false;
     }
     DWORD size = *(DWORD*)(call - 18);
     AddDword(patches, call - 30, size + EXTRA_SLOTS_SIZE);
     AddDword(patches, call - 18, size + EXTRA_SLOTS_SIZE);
-    void* replacement = zzInitWindow;
-    Add(patches, vtable + 8 * initSlot, {});
-    patches.back().bytes.assign((BYTE*)&replacement, (BYTE*)&replacement + 8);
-    s_windows[s_windowCount++] = { vtable, call + 5, size, count, buffs, debuffs, (Construct_t)constructor };
+    AddPointer(patches, vtable + 8 * initSlot, zzInitWindow);
+    found.windows[found.windowCount++] = { vtable, call + 5, size, count, buffs, debuffs, (Construct_t)constructor };
     return true;
 }
 
@@ -614,7 +660,7 @@ static void RedirectSlots(BYTE* update, DWORD buffSlots, DWORD debuffSlots, DWOR
 /// Makes the target window fill the configured number of buffs and debuffs: the update reads the window's own slot arrays and
 /// the picks from buffers of their own, as its stack only holds 24.
 static bool PrepareTargetWindow(HMODULE game, BYTE* vtable, BYTE* init, BYTE* buffSelector, BYTE* debuffSelector, DWORD buffSlots,
-    DWORD debuffSlots, std::vector<Patch>& patches) {
+    DWORD debuffSlots, std::vector<Patch>& patches, BuffCount& found) {
     BYTE* update = FindUpdate(game, vtable, buffSelector);
     BYTE* buffCall = update ? FindCall(update, buffSelector) : nullptr;
     BYTE* debuffCall = update ? FindCall(update, debuffSelector) : nullptr;
@@ -625,21 +671,21 @@ static bool PrepareTargetWindow(HMODULE game, BYTE* vtable, BYTE* init, BYTE* bu
     }
     DWORD regionSize = 0;
     BYTE* region = (BYTE*)DetourAllocateRegionWithinJumpBounds(update, &regionSize);
-    if (!region || regionSize < 2 * MAX_EFFECTS * ENTRY_SIZE || !ExtendWindow(game, vtable, init, TargetCount(), true, true, patches)) {
+    if (!region || regionSize < 2 * MAX_EFFECTS * ENTRY_SIZE || !ExtendWindow(game, vtable, init, TargetCount(), true, true, patches, found)) {
         return false;
     }
-    s_targetPicks[0] = region;
-    s_targetPicks[1] = region + MAX_EFFECTS * ENTRY_SIZE;
+    found.targetPicks[0] = region;
+    found.targetPicks[1] = region + MAX_EFFECTS * ENTRY_SIZE;
 
     int leas, counts, pickLeas = 0;
-    RedirectSlots(update, buffSlots, debuffSlots, s_windows[s_windowCount - 1].slots, false, patches, leas, counts);
+    RedirectSlots(update, buffSlots, debuffSlots, found.windows[found.windowCount - 1].slots, false, patches, leas, counts);
     BYTE* end = FunctionBodyEnd(update, 0x2000);
     for (BYTE* p = update; p + 8 <= end; p++) {
         // lea rbp, [rsp+picks+4]: the effect id of the first pick
         int offset = StackLea(p, 0x48, 5);
         for (int kind = 0; kind < 2 && offset >= 0; kind++) {
             if (offset == (kind == 0 ? buffPicks : debuffPicks) + 4 && (p[2] >> 6) == 2) {
-                INT32 rel = (INT32)(s_targetPicks[kind] + 4 - (p + 7));
+                INT32 rel = (INT32)(found.targetPicks[kind] + 4 - (p + 7));
                 BYTE* r = (BYTE*)&rel;
                 Add(patches, p, { 0x48, 0x8D, 0x2D, r[0], r[1], r[2], r[3], 0x90 });
                 pickLeas++;
@@ -651,15 +697,15 @@ static bool PrepareTargetWindow(HMODULE game, BYTE* vtable, BYTE* init, BYTE* bu
     if (leas < 2 || counts != 2 || pickLeas != 2 || checks != 2) {
         return false;
     }
-    s_routes[s_routeCount++] = { buffCall + 5, s_targetPicks[0], TargetCount() };
-    s_routes[s_routeCount++] = { debuffCall + 5, s_targetPicks[1], TargetCount() };
+    found.routes[found.routeCount++] = { buffCall + 5, found.targetPicks[0], TargetCount() };
+    found.routes[found.routeCount++] = { debuffCall + 5, found.targetPicks[1], TargetCount() };
     return true;
 }
 
 /// Makes the own buff or debuff window fill the configured number: the picks go into its stack buffer, whose following input
 /// has room, and the slots into the window's own arrays.
 static bool PrepareOwnWindow(HMODULE game, BYTE* vtable, BYTE* init, BYTE* selector, bool debuffs, DWORD buffSlots,
-    DWORD debuffSlots, std::vector<Patch>& patches) {
+    DWORD debuffSlots, std::vector<Patch>& patches, BuffCount& found) {
     BYTE* update = FindUpdate(game, vtable, selector);
     BYTE* call = update ? FindCall(update, selector) : nullptr;
     int picks, effects;
@@ -667,17 +713,17 @@ static bool PrepareOwnWindow(HMODULE game, BYTE* vtable, BYTE* init, BYTE* selec
         ModsLog("buffs: %s window update not recognised (%p)", debuffs ? "debuff" : "buff", update);
         return false;
     }
-    if (!ExtendWindow(game, vtable, init, OwnCount(), !debuffs, debuffs, patches)) {
+    if (!ExtendWindow(game, vtable, init, OwnCount(), !debuffs, debuffs, patches, found)) {
         return false;
     }
     int leas, counts;
-    RedirectSlots(update, buffSlots, debuffSlots, s_windows[s_windowCount - 1].slots, true, patches, leas, counts);
+    RedirectSlots(update, buffSlots, debuffSlots, found.windows[found.windowCount - 1].slots, true, patches, leas, counts);
     int checks = PatchLastSlotChecks(update, OwnCount(), patches);
     ModsLog("buffs: %s update %p: %d slot arrays, %d loops, %d slot checks", debuffs ? "debuff" : "buff", update, leas, counts, checks);
     if (leas != 2 || counts != 2 || checks != 1) {
         return false;
     }
-    s_routes[s_routeCount++] = { call + 5, nullptr, OwnCount() };
+    found.routes[found.routeCount++] = { call + 5, nullptr, OwnCount() };
     return true;
 }
 
@@ -687,9 +733,16 @@ static BYTE* FieldStore(BYTE* p) {
     return store[0] == 0xC7 && (store[1] & 0xF8) == 0x80 && (store[1] & 7) != 4 ? store + 2 : nullptr;
 }
 
+/// The columns and rows of the own windows, as their constructors set them, and the rows the client gives each.
+struct OwnGridPlace {
+    bool found = false;
+    int rows[2] = {};
+    std::vector<Patch> patches;
+};
+
 /// Sets the columns and rows of an own window in its constructor: mov [reg+columns], 8 and a later mov [reg+columns+rowsAt],
 /// rows (3 in 4.x, 5 for the 5.x buff window, some as qword stores).
-static bool PatchOwnGrid(HMODULE game, BYTE* vtable, int rowsAt, int window, std::vector<Patch>& patches) {
+static bool FindOwnGrid(HMODULE game, BYTE* vtable, int rowsAt, int window, OwnGridPlace& place) {
     BYTE* constructor = ConstructorOf(game, vtable);
     BYTE* end = constructor ? FunctionBodyEnd(constructor, 0x800) : nullptr;
     for (BYTE* p = constructor; p && p + 11 <= end; p++) {
@@ -700,9 +753,9 @@ static bool PatchOwnGrid(HMODULE game, BYTE* vtable, int rowsAt, int window, std
         for (BYTE* q = p + 1; q < p + 0x40 && q + 11 <= end; q++) {
             BYTE* rows = FieldStore(q);
             if (rows && *(DWORD*)rows == *(DWORD*)columns + rowsAt && *(DWORD*)(rows + 4) > 0 && *(DWORD*)(rows + 4) <= 10) {
-                s_ownRows[window] = *(DWORD*)(rows + 4);
-                AddDword(patches, columns + 4, OwnColumns());
-                AddDword(patches, rows + 4, RowsFor(OwnColumns(), OwnCount()));
+                place.rows[window] = *(DWORD*)(rows + 4);
+                AddDword(place.patches, columns + 4, OwnColumns());
+                AddDword(place.patches, rows + 4, RowsFor(OwnColumns(), OwnCount()));
                 return true;
             }
         }
@@ -710,16 +763,22 @@ static bool PatchOwnGrid(HMODULE game, BYTE* vtable, int rowsAt, int window, std
     return false;
 }
 
-/// Lays the own buff and debuff windows out in the configured columns, with as many rows as their count needs.
-static void InstallOwnGrid(HMODULE game) {
-    std::vector<Patch> patches;
+static OwnGridPlace LocateOwnGrid(HMODULE game) {
+    OwnGridPlace place;
     BYTE* buffVtable = FindVtable(game, ".?AVDlgBuffStatus@@");
     BYTE* debuffVtable = FindVtable(game, ".?AVDlgDebuffStatus@@");
-    s_ownGridReady = buffVtable && debuffVtable && PatchOwnGrid(game, buffVtable, 4, 0, patches)
-        && PatchOwnGrid(game, debuffVtable, 8, 1, patches);
+    place.found = buffVtable && debuffVtable && FindOwnGrid(game, buffVtable, 4, 0, place) && FindOwnGrid(game, debuffVtable, 8, 1, place);
+    return place;
+}
+
+/// Lays the own buff and debuff windows out in the configured columns, with as many rows as their count needs.
+static void ApplyOwnGrid(const OwnGridPlace& place) {
+    s_ownGridReady = place.found;
     ModsLog("buffs: own windows grid %dx%d %s", OwnColumns(), RowsFor(OwnColumns(), OwnCount()), s_ownGridReady ? "set" : "not found");
     if (s_ownGridReady) {
-        Apply(patches);
+        s_ownRows[0] = place.rows[0];
+        s_ownRows[1] = place.rows[1];
+        Apply(place.patches);
     }
 }
 
@@ -741,27 +800,14 @@ static FillSlot_t real_FillSlot = nullptr;
 static SlotRect_t real_SlotRect = nullptr;
 static HideSlots_t real_HideSlots = nullptr;
 
-/// A window with more slots than the client's: its instance once the init ran, and its slots of each kind.
-struct SlotTable {
-    BYTE* vtable;
-    BYTE* window;
-    int count;
-    bool kinds[2];
-    BYTE* slots[2][MAX_EFFECTS];
-};
-static SlotTable s_tables[3];
-static int s_tableCount = 0;
-// the client's slot arrays (buffs, debuffs) in the window and how many slots each has
-static DWORD s_arrays[2] = {};
-static int s_clientSlots[2] = {};
 static int s_slotRectIndex = -1;
 
 /// Mode 2 keeps the first picks, the other mode the last ones; reversed writes them last first.
 static int Deliver5(BYTE* picks, int picked, bool takeFirst, int clientSlots, BYTE* returnTo) {
     const SelectRoute* route = nullptr;
-    for (int i = 0; i < s_routeCount; i++) {
-        if (s_routes[i].returnTo == returnTo) {
-            route = &s_routes[i];
+    for (int i = 0; i < s_count.routeCount; i++) {
+        if (s_count.routes[i].returnTo == returnTo) {
+            route = &s_count.routes[i];
         }
     }
     int kept = min(picked, route ? route->count : clientSlots);
@@ -777,18 +823,18 @@ static int Deliver5(BYTE* picks, int picked, bool takeFirst, int clientSlots, BY
 static int __fastcall zzSelectBuffs5(BYTE* effects, __int64 count, BYTE* picks, __int64 a4, __int64 mode, __int64 reversed, __int64 a7,
     __int64 a8) {
     int picked = real_SelectBuffs5(effects, count, s_scratch, a4, mode, reversed, a7, a8);
-    return Deliver5(picks, picked, ((int)mode == 2) != ((char)reversed != 0), s_clientSlots[0], (BYTE*)_ReturnAddress());
+    return Deliver5(picks, picked, ((int)mode == 2) != ((char)reversed != 0), s_count.clientSlots[0], (BYTE*)_ReturnAddress());
 }
 
 static int __fastcall zzSelectDebuffs5(BYTE* effects, __int64 count, BYTE* picks, __int64 a4, __int64 mode) {
     int picked = real_SelectDebuffs5(effects, count, s_scratch, a4, mode);
-    return Deliver5(picks, picked, (int)mode == 2, s_clientSlots[1], (BYTE*)_ReturnAddress());
+    return Deliver5(picks, picked, (int)mode == 2, s_count.clientSlots[1], (BYTE*)_ReturnAddress());
 }
 
 static SlotTable* TableOf(BYTE* window) {
-    for (int t = 0; t < s_tableCount; t++) {
-        if (s_tables[t].window == window && *(BYTE**)window == s_tables[t].vtable) {
-            return &s_tables[t];
+    for (int t = 0; t < s_count.tableCount; t++) {
+        if (s_count.tables[t].window == window && *(BYTE**)window == s_count.tables[t].vtable) {
+            return &s_count.tables[t];
         }
     }
     return nullptr;
@@ -796,20 +842,20 @@ static SlotTable* TableOf(BYTE* window) {
 
 static void __fastcall zzInitWindow5(BYTE* window) {
     real_InitWindow(window);
-    for (int t = 0; t < s_tableCount; t++) {
-        SlotTable& table = s_tables[t];
+    for (int t = 0; t < s_count.tableCount; t++) {
+        SlotTable& table = s_count.tables[t];
         if (*(BYTE**)window != table.vtable) {
             continue;
         }
         table.window = window;
-        FindChild_t findChild = *(FindChild_t*)(*(BYTE**)window + s_findChildSlot);
+        FindChild_t findChild = *(FindChild_t*)(*(BYTE**)window + s_count.findChildSlot);
         for (int kind = 0; kind < 2; kind++) {
             for (int i = 0; i < MAX_EFFECTS; i++) {
                 char name[32];
                 sprintf_s(name, kind == 0 ? "buff_item%d" : "debuff_item%d", i + 1);
-                BYTE* slot = table.kinds[kind] && i < table.count ? findChild(window, name, s_findChildFlags) : nullptr;
+                BYTE* slot = table.kinds[kind] && i < table.count ? findChild(window, name, s_count.findChildFlags) : nullptr;
                 if (slot) {
-                    *(DWORD*)(slot + s_slotFlagOffset) = s_slotFlag;
+                    *(DWORD*)(slot + s_count.slotFlagOffset) = s_count.slotFlag;
                 }
                 table.slots[kind][i] = slot;
             }
@@ -822,12 +868,12 @@ static void __fastcall zzFillSlot(BYTE* window, __int64 buffs, __int64 icon, __i
     __int64 a8, __int64 a9) {
     int kind = (int)buffs ? 0 : 1;
     int i = (int)index;
-    SlotTable* table = i >= s_clientSlots[kind] && i < MAX_EFFECTS ? TableOf(window) : nullptr;
+    SlotTable* table = i >= s_count.clientSlots[kind] && i < MAX_EFFECTS ? TableOf(window) : nullptr;
     if (!table || !table->slots[kind][i]) {
         real_FillSlot(window, buffs, icon, index, a5, a6, a7, a8, a9);
         return;
     }
-    BYTE** first = (BYTE**)(window + s_arrays[kind]);
+    BYTE** first = (BYTE**)(window + s_count.arrays[kind]);
     BYTE* client = *first;
     *first = table->slots[kind][i];
     s_slotRectIndex = i;
@@ -847,41 +893,42 @@ static void __fastcall zzHideSlots(BYTE* window) {
     if (!table) {
         return;
     }
-    BYTE** arrays[2] = { (BYTE**)(window + s_arrays[0]), (BYTE**)(window + s_arrays[1]) };
+    BYTE** arrays[2] = { (BYTE**)(window + s_count.arrays[0]), (BYTE**)(window + s_count.arrays[1]) };
     BYTE* client[2][MAX_EFFECTS];
-    int next[2] = { s_clientSlots[0], s_clientSlots[1] };
+    int next[2] = { s_count.clientSlots[0], s_count.clientSlots[1] };
     for (int kind = 0; kind < 2; kind++) {
-        memcpy(client[kind], arrays[kind], s_clientSlots[kind] * sizeof(BYTE*));
+        memcpy(client[kind], arrays[kind], s_count.clientSlots[kind] * sizeof(BYTE*));
     }
     while (next[0] < table->count || next[1] < table->count) {
         for (int kind = 0; kind < 2; kind++) {
-            for (int i = 0; i < s_clientSlots[kind]; i++, next[kind]++) {
+            for (int i = 0; i < s_count.clientSlots[kind]; i++, next[kind]++) {
                 arrays[kind][i] = next[kind] < table->count ? table->slots[kind][next[kind]] : nullptr;
             }
         }
         real_HideSlots(window);
     }
     for (int kind = 0; kind < 2; kind++) {
-        memcpy(arrays[kind], client[kind], s_clientSlots[kind] * sizeof(BYTE*));
+        memcpy(arrays[kind], client[kind], s_count.clientSlots[kind] * sizeof(BYTE*));
     }
 }
 
 /// The limit a 5.x selector writes into its code, as mov r32, n; cmp r32, n; cmp r12, n; lea eax, [rdx-n]. The number found.
 static int PatchSelectorLimit5(BYTE* selector, int limit, std::vector<Patch>& patches) {
     BYTE* end = FunctionBodyEnd(selector, 0x2000);
+    static const BYTE MAX_BYTE = MAX_EFFECTS;
+    static const BYTE MINUS_MAX_BYTE = (BYTE)-MAX_EFFECTS;
     int found = 0;
     for (BYTE* p = selector; p + 5 <= end; p++) {
-        Patch patch = {};
+        Patch patch;
         if (p[0] >= 0xB8 && p[0] <= 0xBF && p[0] != 0xBC && *(DWORD*)(p + 1) == (DWORD)limit) {
-            AddDword(patches, p + 1, MAX_EFFECTS);
-            patch = patches.back();
-            patches.pop_back();
+            DWORD value = MAX_EFFECTS;
+            patch = PlanPatch(p + 1, &value, sizeof(value));
         } else if (p[0] == 0x83 && p[1] >= 0xF8 && p[2] == limit && (p == selector || (p[-1] & 0xF0) != 0x40)) {
-            patch = { p + 2, { MAX_EFFECTS } };
+            patch = PlanPatch(p + 2, &MAX_BYTE, 1);
         } else if (p[0] == 0x49 && p[1] == 0x83 && p[2] >= 0xF8 && p[3] == limit) {
-            patch = { p + 3, { MAX_EFFECTS } };
+            patch = PlanPatch(p + 3, &MAX_BYTE, 1);
         } else if (p[0] == 0x8D && p[1] == 0x42 && p[2] == (BYTE)-limit) {
-            patch = { p + 2, { (BYTE)-MAX_EFFECTS } };
+            patch = PlanPatch(p + 2, &MINUS_MAX_BYTE, 1);
         }
         // the ranges of the function are not contiguous; code between them belongs to others
         if (patch.at && FunctionStart(p) == selector) {
@@ -894,11 +941,11 @@ static int PatchSelectorLimit5(BYTE* selector, int limit, std::vector<Patch>& pa
 
 /// The function the update calls that hides every slot: lea reg, [rcx+buffs]; mov r32, n; ... lea reg, [rcx+debuffs];
 /// mov r32, m. Gets the slot counts.
-static bool IsHideSlots(BYTE* function, int counts[2]) {
+static bool IsHideSlots(BYTE* function, int counts[2], const BuffCount& state) {
     BYTE* end = FunctionBodyEnd(function, 0x200);
     int found = 0;
     for (BYTE* p = function; p + 12 <= end && found < 2; p++) {
-        BYTE* displacement = FieldLea(p, s_arrays[found]);
+        BYTE* displacement = FieldLea(p, state.arrays[found]);
         BYTE* count = displacement && displacement[4] >= 0xB8 && displacement[4] <= 0xBF ? displacement + 4 : nullptr;
         if (count && *(DWORD*)(count + 1) > 0 && *(DWORD*)(count + 1) <= 64) {
             counts[found++] = *(DWORD*)(count + 1);
@@ -908,12 +955,12 @@ static bool IsHideSlots(BYTE* function, int counts[2]) {
 }
 
 /// The function that fills one slot: mov reg, [rcx+index*8+buffs] and the same for debuffs.
-static bool IsFillSlot(BYTE* function) {
+static bool IsFillSlot(BYTE* function, const BuffCount& state) {
     BYTE* end = FunctionBodyEnd(function, 0x400);
     int found = 0;
     for (BYTE* p = function; p + 8 <= end; p++) {
         if (p[0] == 0x8B && (p[1] & 0xC7) == 0x84 && (p[2] >> 6) == 3) {
-            found |= *(DWORD*)(p + 3) == s_arrays[0] ? 1 : *(DWORD*)(p + 3) == s_arrays[1] ? 2 : 0;
+            found |= *(DWORD*)(p + 3) == state.arrays[0] ? 1 : *(DWORD*)(p + 3) == state.arrays[1] ? 2 : 0;
         }
     }
     return found == 3;
@@ -1004,7 +1051,7 @@ static int RedirectPicks(BYTE* update, BYTE* call, BYTE* picks, BYTE*& stub, std
 }
 
 /// The window's update: the entry of its table that calls the functions hiding and filling the slots.
-static BYTE* FindUpdate5(HMODULE game, BYTE* vtable, int counts[2]) {
+static BYTE* FindUpdate5(HMODULE game, BYTE* vtable, int counts[2], const BuffCount& found) {
     for (int i = 0; vtable && i < 260; i++) {
         BYTE* function = ((BYTE**)vtable)[i];
         if (!InModule(game, function, 16)) {
@@ -1016,8 +1063,8 @@ static BYTE* FindUpdate5(HMODULE game, BYTE* vtable, int counts[2]) {
         bool hides = false, fills = false;
         for (BYTE* call : CallsOf(game, function, 0x800)) {
             BYTE* target = ResolveRip(call + 1, call + 5);
-            hides = hides || IsHideSlots(target, counts);
-            fills = fills || IsFillSlot(target);
+            hides = hides || IsHideSlots(target, counts, found);
+            fills = fills || IsFillSlot(target, found);
         }
         if (hides && fills) {
             return function;
@@ -1026,8 +1073,8 @@ static BYTE* FindUpdate5(HMODULE game, BYTE* vtable, int counts[2]) {
     return nullptr;
 }
 
-static void AddTable(BYTE* vtable, int count, bool buffs, bool debuffs) {
-    SlotTable& table = s_tables[s_tableCount++];
+static void AddTable(BYTE* vtable, int count, bool buffs, bool debuffs, BuffCount& found) {
+    SlotTable& table = found.tables[found.tableCount++];
     table = {};
     table.vtable = vtable;
     table.count = count;
@@ -1039,17 +1086,31 @@ static void AddTable(BYTE* vtable, int count, bool buffs, bool debuffs) {
 static bool ReplaceInit(BYTE* vtable, BYTE* init, std::vector<Patch>& patches) {
     for (int i = 0; i < 64; i++) {
         if (((BYTE**)vtable)[i] == init) {
-            void* replacement = zzInitWindow5;
-            Add(patches, vtable + 8 * i, {});
-            patches.back().bytes.assign((BYTE*)&replacement, (BYTE*)&replacement + 8);
+            AddPointer(patches, vtable + 8 * i, zzInitWindow5);
             return true;
         }
     }
     return false;
 }
 
+/// The buff count as its search found it: what the hooks will use, the changes, and the functions to hook.
+struct BuffCountPlace {
+    BuffCount found;
+    bool client5 = false;
+    // the selectors' limits first, then the windows'
+    std::vector<Patch> patches;
+    BYTE* init = nullptr;
+    BYTE* buffSelector = nullptr;
+    BYTE* debuffSelector = nullptr;
+    // 5.x: the functions filling a slot, placing it and hiding them all
+    BYTE* fill = nullptr;
+    BYTE* rect = nullptr;
+    BYTE* hide = nullptr;
+};
+
 /// 5.x: shows up to MAX_EFFECTS buffs and as many debuffs in the own windows and the target window.
-static void InstallBuffCount5(HMODULE game, BYTE* buffVtable, BYTE* debuffVtable, BYTE* targetVtable, BYTE* init) {
+static void LocateBuffCount5(HMODULE game, BYTE* buffVtable, BYTE* debuffVtable, BYTE* targetVtable, BYTE* init, BuffCountPlace& place) {
+    BuffCount& found = place.found;
     BYTE* buffName = FindBytes(game, "\0buff_item%d", 13);
     BYTE* debuffName = FindBytes(game, "\0debuff_item%d", 15);
     BYTE* buffLea = buffName ? FindLeaTo(game, buffName + 1) : nullptr;
@@ -1059,39 +1120,39 @@ static void InstallBuffCount5(HMODULE game, BYTE* buffVtable, BYTE* debuffVtable
         for (BYTE* p = nameLea ? nameLea - 0x30 : nullptr; p && p < nameLea; p++) {
             BYTE* displacement = FieldLeaDisplacement(p);
             if (displacement && displacement + 4 <= nameLea && *(DWORD*)displacement > 0x100 && *(DWORD*)displacement < 0x2000) {
-                s_arrays[kind] = *(DWORD*)displacement;
+                found.arrays[kind] = *(DWORD*)displacement;
             }
         }
     }
     int counts[2];
-    BYTE* buffUpdate = s_arrays[0] && s_arrays[1] ? FindUpdate5(game, buffVtable, counts) : nullptr;
-    BYTE* debuffUpdate = buffUpdate ? FindUpdate5(game, debuffVtable, counts) : nullptr;
-    if (!buffUpdate || !debuffUpdate || !ParseInit(init)) {
-        ModsLog("buffs: 5.x slot arrays %X/%X, updates %p/%p or init not found", s_arrays[0], s_arrays[1], buffUpdate, debuffUpdate);
+    BYTE* buffUpdate = found.arrays[0] && found.arrays[1] ? FindUpdate5(game, buffVtable, counts, found) : nullptr;
+    BYTE* debuffUpdate = buffUpdate ? FindUpdate5(game, debuffVtable, counts, found) : nullptr;
+    if (!buffUpdate || !debuffUpdate || !ParseInit(init, found)) {
+        ModsLog("buffs: 5.x slot arrays %X/%X, updates %p/%p or init not found", found.arrays[0], found.arrays[1], buffUpdate, debuffUpdate);
         return;
     }
-    s_clientSlots[0] = counts[0];
-    s_clientSlots[1] = counts[1];
+    found.clientSlots[0] = counts[0];
+    found.clientSlots[1] = counts[1];
     std::vector<Patch> selectorPatches, windowPatches;
     BYTE *buffSelector = nullptr, *debuffSelector = nullptr, *buffCall = nullptr, *debuffCall = nullptr, *fill = nullptr, *hide = nullptr;
     for (BYTE* call : CallsOf(game, buffUpdate, 0x800)) {
         BYTE* target = ResolveRip(call + 1, call + 5);
         int hideCounts[2];
         std::vector<Patch> limits;
-        if (!buffSelector && PatchSelectorLimit5(target, s_clientSlots[0], limits) == 3) {
+        if (!buffSelector && PatchSelectorLimit5(target, found.clientSlots[0], limits) == 3) {
             buffSelector = target;
             buffCall = call;
             selectorPatches.insert(selectorPatches.end(), limits.begin(), limits.end());
-        } else if (!fill && IsFillSlot(target)) {
+        } else if (!fill && IsFillSlot(target, found)) {
             fill = target;
-        } else if (!hide && IsHideSlots(target, hideCounts)) {
+        } else if (!hide && IsHideSlots(target, hideCounts, found)) {
             hide = target;
         }
     }
     for (BYTE* call : CallsOf(game, debuffUpdate, 0x800)) {
         BYTE* target = ResolveRip(call + 1, call + 5);
         std::vector<Patch> limits;
-        if (PatchSelectorLimit5(target, s_clientSlots[1], limits) == 4) {
+        if (PatchSelectorLimit5(target, found.clientSlots[1], limits) == 4) {
             debuffSelector = target;
             debuffCall = call;
             selectorPatches.insert(selectorPatches.end(), limits.begin(), limits.end());
@@ -1103,20 +1164,20 @@ static void InstallBuffCount5(HMODULE game, BYTE* buffVtable, BYTE* debuffVtable
     BYTE* rect = fillCalls.empty() ? nullptr : ResolveRip(fillCalls.back() + 1, fillCalls.back() + 5);
     int picks, effects;
     if (!buffSelector || !debuffSelector || !fill || !hide || !rect || selectorPatches.size() != 7
-        || !CallBuffers(buffCall, picks, effects) || effects != picks + s_clientSlots[0] * ENTRY_SIZE_5X
-        || !CallBuffers(debuffCall, picks, effects) || effects != picks + s_clientSlots[1] * ENTRY_SIZE_5X) {
+        || !CallBuffers(buffCall, picks, effects) || effects != picks + found.clientSlots[0] * ENTRY_SIZE_5X
+        || !CallBuffers(debuffCall, picks, effects) || effects != picks + found.clientSlots[1] * ENTRY_SIZE_5X) {
         ModsLog("buffs: 5.x selectors %p/%p, fill %p, hide %p, rect %p, %d limits not recognised", buffSelector, debuffSelector, fill,
             hide, rect, (int)selectorPatches.size());
         return;
     }
 
-    s_ownWindowsReady = OwnCount() > s_clientSlots[1] && ReplaceInit(buffVtable, init, windowPatches)
+    found.ownWindowsReady = OwnCount() > found.clientSlots[1] && ReplaceInit(buffVtable, init, windowPatches)
         && ReplaceInit(debuffVtable, init, windowPatches);
-    if (s_ownWindowsReady) {
-        AddTable(buffVtable, OwnCount(), true, false);
-        AddTable(debuffVtable, OwnCount(), false, true);
-        s_routes[s_routeCount++] = { buffCall + 5, nullptr, OwnCount() };
-        s_routes[s_routeCount++] = { debuffCall + 5, nullptr, OwnCount() };
+    if (found.ownWindowsReady) {
+        AddTable(buffVtable, OwnCount(), true, false, found);
+        AddTable(debuffVtable, OwnCount(), false, true, found);
+        found.routes[found.routeCount++] = { buffCall + 5, nullptr, OwnCount() };
+        found.routes[found.routeCount++] = { debuffCall + 5, nullptr, OwnCount() };
     } else {
         windowPatches.clear();
     }
@@ -1126,7 +1187,7 @@ static void InstallBuffCount5(HMODULE game, BYTE* buffVtable, BYTE* debuffVtable
     BYTE* targetDebuffCall = targetUpdate ? FindCall(targetUpdate, debuffSelector) : nullptr;
     DWORD regionSize = 0;
     BYTE* region = targetUpdate ? (BYTE*)DetourAllocateRegionWithinJumpBounds(targetUpdate, &regionSize) : nullptr;
-    if (TargetCount() > s_clientSlots[1] && targetBuffCall && targetDebuffCall && region
+    if (TargetCount() > found.clientSlots[1] && targetBuffCall && targetDebuffCall && region
         && regionSize >= 2 * MAX_EFFECTS * ENTRY_SIZE_5X + 64) {
         std::vector<Patch> targetPatches;
         BYTE* buffPicks = region;
@@ -1136,36 +1197,30 @@ static void InstallBuffCount5(HMODULE game, BYTE* buffVtable, BYTE* debuffVtable
         int debuffReads = RedirectPicks(targetUpdate, targetDebuffCall, debuffPicks, stub, targetPatches);
         ModsLog("buffs: 5.x target update %p: %d buff and %d debuff pick reads", targetUpdate, buffReads, debuffReads);
         if (buffReads == 1 && debuffReads == 1 && ReplaceInit(targetVtable, init, targetPatches)) {
-            AddTable(targetVtable, TargetCount(), true, true);
-            s_routes[s_routeCount++] = { targetBuffCall + 5, buffPicks, TargetCount() };
-            s_routes[s_routeCount++] = { targetDebuffCall + 5, debuffPicks, TargetCount() };
+            AddTable(targetVtable, TargetCount(), true, true, found);
+            found.routes[found.routeCount++] = { targetBuffCall + 5, buffPicks, TargetCount() };
+            found.routes[found.routeCount++] = { targetDebuffCall + 5, debuffPicks, TargetCount() };
             windowPatches.insert(windowPatches.end(), targetPatches.begin(), targetPatches.end());
-            s_targetWindowReady = true;
+            found.targetWindowReady = true;
         }
     }
-    ModsLog("buffs: 5.x client slots %d/%d, own windows %s, target window %s", s_clientSlots[0], s_clientSlots[1],
-        s_ownWindowsReady ? "ready" : "unchanged", s_targetWindowReady ? "ready" : "unchanged");
-    if (!s_routeCount) {
-        return;
-    }
-    Apply(selectorPatches);
-    Apply(windowPatches);
-    real_InitWindow = (InitWindow_t)init;
-    real_SelectBuffs5 = (SelectBuffs5_t)buffSelector;
-    real_SelectDebuffs5 = (SelectDebuffs5_t)debuffSelector;
-    real_FillSlot = (FillSlot_t)fill;
-    real_SlotRect = (SlotRect_t)rect;
-    real_HideSlots = (HideSlots_t)hide;
-    AttachHook(&(PVOID&)real_SelectBuffs5, zzSelectBuffs5);
-    AttachHook(&(PVOID&)real_SelectDebuffs5, zzSelectDebuffs5);
-    AttachHook(&(PVOID&)real_FillSlot, zzFillSlot);
-    AttachHook(&(PVOID&)real_SlotRect, zzSlotRect);
-    AttachHook(&(PVOID&)real_HideSlots, zzHideSlots);
+    ModsLog("buffs: 5.x client slots %d/%d, own windows %s, target window %s", found.clientSlots[0], found.clientSlots[1],
+        found.ownWindowsReady ? "ready" : "unchanged", found.targetWindowReady ? "ready" : "unchanged");
+    place.client5 = true;
+    place.patches = selectorPatches;
+    place.patches.insert(place.patches.end(), windowPatches.begin(), windowPatches.end());
+    place.init = init;
+    place.buffSelector = buffSelector;
+    place.debuffSelector = debuffSelector;
+    place.fill = fill;
+    place.rect = rect;
+    place.hide = hide;
 }
 
 /// Shows up to MAX_EFFECTS buffs and as many debuffs in the own buff and debuff windows and in the target window. Needs the UI
 /// XML edits for the added slots.
-static void InstallBuffCount(HMODULE game, BYTE* targetVtable) {
+static void LocateBuffCount(HMODULE game, BYTE* targetVtable, BuffCountPlace& place) {
+    BuffCount& found = place.found;
     std::vector<BYTE*> limits = FindAllPatterns(game, "83 FB 18 7C 05 BB 18 00 00 00");
     BYTE* buffVtable = FindVtable(game, ".?AVDlgBuffStatus@@");
     BYTE* debuffVtable = FindVtable(game, ".?AVDlgDebuffStatus@@");
@@ -1178,7 +1233,7 @@ static void InstallBuffCount(HMODULE game, BYTE* targetVtable) {
         return;
     }
     if (limits.empty()) {
-        InstallBuffCount5(game, buffVtable, debuffVtable, targetVtable, init);
+        LocateBuffCount5(game, buffVtable, debuffVtable, targetVtable, init, place);
         return;
     }
     if (limits.size() != 2) {
@@ -1192,41 +1247,63 @@ static void InstallBuffCount(HMODULE game, BYTE* targetVtable) {
     DWORD buffSlots, debuffSlots;
     std::vector<Patch> selectorPatches, ownPatches, targetPatches;
     if (!PatchSelectorLimit(buffSelector, selectorPatches) || !PatchSelectorLimit(debuffSelector, selectorPatches)
-        || !FindSlotArrays(slotNameLea, buffSlots, debuffSlots) || !ParseInit(init)) {
+        || !FindSlotArrays(slotNameLea, buffSlots, debuffSlots) || !ParseInit(init, found)) {
         ModsLog("buffs: selector limits, slot arrays or init not recognised");
         return;
     }
-    s_ownWindowsReady = OwnCount() > CLIENT_EFFECTS
-        && PrepareOwnWindow(game, buffVtable, init, buffSelector, false, buffSlots, debuffSlots, ownPatches)
-        && PrepareOwnWindow(game, debuffVtable, init, debuffSelector, true, buffSlots, debuffSlots, ownPatches);
-    if (!s_ownWindowsReady) {
-        s_routeCount = 0;
-        s_windowCount = 0;
+    found.ownWindowsReady = OwnCount() > CLIENT_EFFECTS
+        && PrepareOwnWindow(game, buffVtable, init, buffSelector, false, buffSlots, debuffSlots, ownPatches, found)
+        && PrepareOwnWindow(game, debuffVtable, init, debuffSelector, true, buffSlots, debuffSlots, ownPatches, found);
+    if (!found.ownWindowsReady) {
+        found.routeCount = 0;
+        found.windowCount = 0;
         ownPatches.clear();
     }
-    int ownRoutes = s_routeCount, ownWindows = s_windowCount;
-    s_targetWindowReady = TargetCount() > CLIENT_EFFECTS && targetVtable
-        && PrepareTargetWindow(game, targetVtable, init, buffSelector, debuffSelector, buffSlots, debuffSlots, targetPatches);
-    if (!s_targetWindowReady) {
-        s_routeCount = ownRoutes;
-        s_windowCount = ownWindows;
+    int ownRoutes = found.routeCount, ownWindows = found.windowCount;
+    found.targetWindowReady = TargetCount() > CLIENT_EFFECTS && targetVtable
+        && PrepareTargetWindow(game, targetVtable, init, buffSelector, debuffSelector, buffSlots, debuffSlots, targetPatches, found);
+    if (!found.targetWindowReady) {
+        found.routeCount = ownRoutes;
+        found.windowCount = ownWindows;
         targetPatches.clear();
     }
-    ModsLog("buffs: own windows %s (%d), target window %s (%d)", s_ownWindowsReady ? "ready" : "unchanged", OwnCount(),
-        s_targetWindowReady ? "ready" : "unchanged", TargetCount());
-    if (!s_routeCount) {
+    ModsLog("buffs: own windows %s (%d), target window %s (%d)", found.ownWindowsReady ? "ready" : "unchanged", OwnCount(),
+        found.targetWindowReady ? "ready" : "unchanged", TargetCount());
+    place.patches = selectorPatches;
+    place.patches.insert(place.patches.end(), ownPatches.begin(), ownPatches.end());
+    place.patches.insert(place.patches.end(), targetPatches.begin(), targetPatches.end());
+    place.init = init;
+    place.buffSelector = buffSelector;
+    place.debuffSelector = debuffSelector;
+}
+
+/// Hands what the search found to the hooks, then changes the selectors and windows and hooks them, if any window gets more slots.
+static void ApplyBuffCount(const BuffCountPlace& place) {
+    if (!place.found.routeCount) {
         return;
     }
-    Apply(selectorPatches);
-    Apply(ownPatches);
-    Apply(targetPatches);
-    real_SelectBuffs = (SelectBuffs_t)buffSelector;
-    real_SelectDebuffs = (SelectDebuffs_t)debuffSelector;
+    s_count = place.found;
+    Apply(place.patches);
+    real_InitWindow = (InitWindow_t)place.init;
+    if (place.client5) {
+        real_SelectBuffs5 = (SelectBuffs5_t)place.buffSelector;
+        real_SelectDebuffs5 = (SelectDebuffs5_t)place.debuffSelector;
+        real_FillSlot = (FillSlot_t)place.fill;
+        real_SlotRect = (SlotRect_t)place.rect;
+        real_HideSlots = (HideSlots_t)place.hide;
+        AttachHook(&(PVOID&)real_SelectBuffs5, zzSelectBuffs5);
+        AttachHook(&(PVOID&)real_SelectDebuffs5, zzSelectDebuffs5);
+        AttachHook(&(PVOID&)real_FillSlot, zzFillSlot);
+        AttachHook(&(PVOID&)real_SlotRect, zzSlotRect);
+        AttachHook(&(PVOID&)real_HideSlots, zzHideSlots);
+        return;
+    }
+    real_SelectBuffs = (SelectBuffs_t)place.buffSelector;
+    real_SelectDebuffs = (SelectDebuffs_t)place.debuffSelector;
     AttachHook(&(PVOID&)real_SelectBuffs, zzSelectBuffs);
     AttachHook(&(PVOID&)real_SelectDebuffs, zzSelectDebuffs);
-    real_InitWindow = (InitWindow_t)init;
-    for (int w = 0; w < s_windowCount; w++) {
-        AttachHook(&(PVOID&)s_windows[w].realConstruct, CONSTRUCT_HOOKS[w]);
+    for (int w = 0; w < s_count.windowCount; w++) {
+        AttachHook(&(PVOID&)s_count.windows[w].realConstruct, CONSTRUCT_HOOKS[w]);
     }
 }
 
@@ -1255,40 +1332,86 @@ static int ClientSlots(HMODULE game) {
 /// The target window lays its buff and debuff icons out in a grid of 10 columns and 2 rows each. Its constructor sets the
 /// columns, rows of buffs and rows of debuffs one after another:
 /// mov dword ptr [reg+columns], 10; mov dword ptr [reg+rows], 2; mov dword ptr [reg+debuffRows], 2
-/// Runs after the UI XML hooks are in place, which the added slots need.
-void InstallBuffSlots(HMODULE game, bool uiXml) {
-    BYTE* vtable = FindVtable(game, ".?AVDlgTargetBuffStatus@@");
-    BYTE* constructor = ConstructorOf(game, vtable);
-    if (uiXml && max(TargetCount(), OwnCount()) > CLIENT_EFFECTS) {
-        InstallBuffCount(game, vtable);
+/// Returns the places; the values are written later, as the rows depend on whether the buff count changed the target window.
+static std::vector<BYTE*> LocateTargetGrid(BYTE* constructor) {
+    std::vector<BYTE*> grids;
+    BYTE* end = FunctionBodyEnd(constructor, 0x800);
+    for (BYTE* p = constructor; p + 30 <= end; p++) {
+        if (p[0] == 0xC7 && (p[1] & 0xF8) == 0x80 && *(DWORD*)(p + 6) == 10
+            && p[10] == 0xC7 && p[11] == p[1] && *(DWORD*)(p + 12) == *(DWORD*)(p + 2) + 4 && *(DWORD*)(p + 16) == 2
+            && p[20] == 0xC7 && p[21] == p[1] && *(DWORD*)(p + 22) == *(DWORD*)(p + 2) + 8 && *(DWORD*)(p + 26) == 2) {
+            grids.push_back(p);
+        }
     }
-    if (uiXml && g_modsConfig.ownBuffColumns) {
-        InstallOwnGrid(game);
+    return grids;
+}
+
+/// The added slots are edits of the windows' UI files, made by the UI XML hooks.
+void InstallBuffCount(HMODULE game, bool uiXml) {
+    if (max(TargetCount(), OwnCount()) <= CLIENT_EFFECTS) {
+        ReportStatus(InstallStatus::Disabled);
+        return;
+    }
+    if (!uiXml) {
+        ReportStatus(InstallStatus::SkippedDependency);
+        return;
+    }
+    BuffCountPlace count;
+    {
+        LocatePhase phase;
+        LocateBuffCount(game, FindVtable(game, ".?AVDlgTargetBuffStatus@@"), count);
+    }
+    ApplyBuffCount(count);
+}
+
+/// The window sizes are edits of their UI files as well.
+void InstallOwnGrid(HMODULE game, bool uiXml) {
+    if (!uiXml) {
+        ReportStatus(InstallStatus::SkippedDependency);
+        return;
+    }
+    LocateThenApply(game, LocateOwnGrid, ApplyOwnGrid);
+}
+
+/// After the buff count, which decides the rows of the target window.
+void InstallTargetGrid(HMODULE game) {
+    BYTE* vtable;
+    BYTE* constructor;
+    {
+        LocatePhase phase;
+        vtable = FindVtable(game, ".?AVDlgTargetBuffStatus@@");
+        constructor = ConstructorOf(game, vtable);
     }
     if (!constructor) {
         ModsLog("buffs: target window constructor not found");
         return;
     }
     DWORD columns = g_modsConfig.targetBuffColumns ? g_modsConfig.targetBuffColumns : CLIENT_TARGET_COLUMNS;
-    int clientSlots = ClientSlots(game);
-    if (clientSlots > CLIENT_EFFECTS && columns > CLIENT_TARGET_COLUMNS) {
-        InstallRowsBelowAssist(game, vtable);
-    }
-    DWORD rows = RowsFor(columns, s_targetWindowReady ? TargetCount() : clientSlots);
-    if (!g_modsConfig.targetBuffColumns && !s_targetWindowReady) {
-        return;
-    }
-    BYTE* end = FunctionBodyEnd(constructor, 0x800);
-    int patched = 0;
-    for (BYTE* p = constructor; p + 30 <= end; p++) {
-        if (p[0] == 0xC7 && (p[1] & 0xF8) == 0x80 && *(DWORD*)(p + 6) == 10
-            && p[10] == 0xC7 && p[11] == p[1] && *(DWORD*)(p + 12) == *(DWORD*)(p + 2) + 4 && *(DWORD*)(p + 16) == 2
-            && p[20] == 0xC7 && p[21] == p[1] && *(DWORD*)(p + 22) == *(DWORD*)(p + 2) + 8 && *(DWORD*)(p + 26) == 2) {
-            PatchMemory(p + 6, &columns, sizeof(columns));
-            PatchMemory(p + 16, &rows, sizeof(rows));
-            PatchMemory(p + 26, &rows, sizeof(rows));
-            patched++;
+    int clientSlots;
+    AssistPlace assist;
+    std::vector<CodePatch> grid;
+    {
+        LocatePhase phase;
+        clientSlots = ClientSlots(game);
+        if (clientSlots > CLIENT_EFFECTS && columns > CLIENT_TARGET_COLUMNS) {
+            assist = LocateRowsBelowAssist(game, vtable);
+        }
+        // the columns, rows of buffs and rows of debuffs, one change each
+        for (BYTE* p : LocateTargetGrid(constructor)) {
+            grid.push_back(ExpectBytes(p + 6, 4));
+            grid.push_back(ExpectBytes(p + 16, 4));
+            grid.push_back(ExpectBytes(p + 26, 4));
         }
     }
-    ModsLog("buffs: target window grid 10x2 -> %dx%d at %d places in %p", columns, rows, patched, constructor);
+    if (clientSlots > CLIENT_EFFECTS && columns > CLIENT_TARGET_COLUMNS) {
+        ApplyRowsBelowAssist(assist);
+    }
+    DWORD rows = RowsFor(columns, s_count.targetWindowReady ? TargetCount() : clientSlots);
+    if (!g_modsConfig.targetBuffColumns && !s_count.targetWindowReady) {
+        return;
+    }
+    for (size_t i = 0; i < grid.size(); i++) {
+        ApplyPatch(grid[i], i % 3 == 0 ? &columns : &rows);
+    }
+    ModsLog("buffs: target window grid 10x2 -> %dx%d at %d places in %p", columns, rows, (int)grid.size() / 3, constructor);
 }

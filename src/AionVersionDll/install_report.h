@@ -78,6 +78,22 @@ void ReportWrite(const void* at, bool done);
 /// DetourAttach that counts the hook for the current fix or mod. Must be called inside an open Detours transaction.
 LONG AttachHook(PVOID* real, PVOID hook);
 
+/// A fix or mod in the table of those installed together: its id in the summary, whether mods.ini turns it on (nullptr: always, as for
+/// the fixes) and what installs it, given the module it changes (nullptr for the tables of the process start).
+struct InstallEntry {
+    const char* id;
+    bool (*enabled)();
+    void (*install)(HMODULE module);
+};
+
+/// Installs the entries in their order, each in a scope of its own; one that mods.ini turned off is reported as such and left out.
+void InstallAll(const InstallEntry* entries, size_t count, HMODULE module);
+
+template <size_t N>
+void InstallAll(const InstallEntry (&entries)[N], HMODULE module) {
+    InstallAll(entries, N, module);
+}
+
 /// Writes one line per fix and mod that installed or changed since the last summary. After the final one, a fix or mod that does something
 /// more gets a line of its own as it ends.
 void LogInstallSummary(const char* when, bool final);

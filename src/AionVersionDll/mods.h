@@ -39,6 +39,9 @@ struct ModsConfig {
 
 enum { FAST_START_OFF, FAST_START_SHOW_LOGO, FAST_START_FULL };
 
+/// The clients give fonts taller than 32 pixels the larger glyph cells.
+constexpr int CLIENT_LARGE_GLYPH_FROM = 33;
+
 extern ModsConfig g_modsConfig;
 
 /// The idle check, which compares the time since the last input against the idle limit (901652 = STR_MSG_AUTO_DISCONNECTED).
@@ -51,11 +54,19 @@ bool IsInWorld();
 /// Must be called inside an open Detours transaction.
 void InstallMods();
 void InstallChatTime(HMODULE game);
-void InstallTimeouts(HMODULE game);
+/// Raises the idle limit of the client out of reach.
+void InstallAntiAfk(HMODULE game);
+/// Turns off the 26-hour session limit.
+void InstallSessionTimeout(HMODULE game);
 void InstallPing(HMODULE game);
 void InstallMacroLimit(HMODULE game);
 void InstallBuffLimit(HMODULE game);
-void InstallBuffSlots(HMODULE game, bool uiXml);
+/// Up to 64 buffs and debuffs in the own windows and the target window, once the UI XML hooks are in place.
+void InstallBuffCount(HMODULE game, bool uiXml);
+/// The configured columns of the own buff windows.
+void InstallOwnGrid(HMODULE game, bool uiXml);
+/// The configured columns of the target window, and its rows below the target of the target in 5.x.
+void InstallTargetGrid(HMODULE game);
 /// Also reads the text files that are valid UTF-8 as UTF-8. Returns whether the edits can be applied.
 bool InstallUiXml(HMODULE game);
 

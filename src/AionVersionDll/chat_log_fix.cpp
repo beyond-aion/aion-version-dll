@@ -135,40 +135,68 @@ static BYTE* FunctionStart(BYTE* address) {
     return nullptr;
 }
 
+namespace {
+
+struct Place {
+    BYTE* writer = nullptr;
+    const char* cvarName = nullptr;
+    void** system = nullptr;
+    // the virtual calls the writer makes, in order: the system's console, the variable by name, its integer value
+    DWORD calls[3] = {};
+};
+
 /// mov rcx, [rip+system]; then the virtual calls: call [reg+offset]
-static void ReadWriter(BYTE* writer, BYTE* end) {
+void ReadWriter(BYTE* writer, BYTE* end, Place& place) {
     int calls = 0;
     for (BYTE* p = writer; p + 7 <= end && calls < 3; p++) {
         int mod = p[1] >> 6, reg = (p[1] >> 3) & 7, rm = p[1] & 7;
-        if (!s_system && p[0] == 0x48 && p[1] == 0x8B && p[2] == 0x0D) {
-            s_system = (void**)(p + 7 + *(INT32*)(p + 3));
+        if (!place.system && p[0] == 0x48 && p[1] == 0x8B && p[2] == 0x0D) {
+            place.system = (void**)(p + 7 + *(INT32*)(p + 3));
         } else if (p[0] == 0xFF && reg == 2 && rm != 4 && (mod == 1 || mod == 2)) {
-            s_calls[calls++] = mod == 1 ? p[2] : *(DWORD*)(p + 2);
+            place.calls[calls++] = mod == 1 ? p[2] : *(DWORD*)(p + 2);
         }
     }
 }
 
-
 /// The writer formats the line with the Chat.log format, and before it asks for the variable.
-static void InstallWriter(HMODULE game) {
-    InstallScope scope("chat_log_fix");
-    s_cvarName = (const char*)FindString(game, "g_chatlog", 10);
+Place Locate(HMODULE game) {
+    Place place;
+    place.cvarName = (const char*)FindString(game, "g_chatlog", 10);
     BYTE* format = FindString(game, LINE_FORMAT, sizeof(LINE_FORMAT));
     BYTE* reference = format ? FindReference(game, format) : nullptr;
-    BYTE* writer = reference ? FunctionStart(reference) : nullptr;
-    if (writer) {
-        ReadWriter(writer, reference);
+    place.writer = reference ? FunctionStart(reference) : nullptr;
+    if (place.writer) {
+        ReadWriter(place.writer, reference, place);
     }
-    MODULE_LOG("chat log: writer=%p system=%p calls=%X,%X,%X", writer, s_system, s_calls[0], s_calls[1], s_calls[2]);
-    if (!writer || !s_cvarName || !s_system || !s_calls[2]) {
+    return place;
+}
+
+void Apply(const Place& place) {
+    s_cvarName = place.cvarName;
+    s_system = place.system;
+    memcpy(s_calls, place.calls, sizeof(s_calls));
+    MODULE_LOG("chat log: writer=%p system=%p calls=%X,%X,%X", place.writer, s_system, s_calls[0], s_calls[1], s_calls[2]);
+    if (!place.writer || !s_cvarName || !s_system || !s_calls[2]) {
         return;
     }
-    real_ChatLogWrite = (ChatLogWrite_t)writer;
+    real_ChatLogWrite = (ChatLogWrite_t)place.writer;
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
     AttachHook(&(PVOID&)real_ChatLogWrite, zzChatLogWrite);
     DetourTransactionCommit();
 }
+
+void InstallWriter(HMODULE game) {
+    InstallScope scope("chat_log_fix");
+    Place place;
+    {
+        LocatePhase phase;
+        place = Locate(game);
+    }
+    Apply(place);
+}
+
+} // namespace
 
 void InstallChatLogFix() {
     AttachHook(&(PVOID&)real_DeleteFileA, zzDeleteFileA);

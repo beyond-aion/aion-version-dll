@@ -249,38 +249,6 @@ static void __fastcall zzSetQuestMarker(BYTE* npc, int questId, int state, int k
     markerState[2] = kind;
 }
 
-/// For clients that do not show the quest target effect themselves: the marker function names the marker effects, then looks
-/// one up: lea rcx, [kind*3]; lea rax, [table]; lea rdx, [state+rcx*4]; mov rcx, [npc+effects]; mov rdx, [rax+rdx*8]; call
-static void InstallQuestTargetEffect(HMODULE game) {
-    if (FindBytes(game, QUEST_TARGET_EFFECT, sizeof(QUEST_TARGET_EFFECT))) {
-        return;
-    }
-    const void* name = FindBytes(game, FIRST_MARKER_EFFECT, sizeof(FIRST_MARKER_EFFECT));
-    BYTE* nameLea = name ? FindLeaTo(game, name) : nullptr;
-    BYTE* function = nameLea ? FunctionStart(nameLea) : nullptr;
-    BYTE* lookup = nullptr;
-    for (BYTE* p = function; p && p < function + 0x800 && !lookup; p++) {
-        if (memcmp(p, "\x48\x8D\x05", 3) == 0 && memcmp(p + 7, "\x48\x8D\x14\x8F\x48\x8B\x8B", 7) == 0 && memcmp(p + 18, "\x48\x8B\x14\xD0\xE8", 5) == 0) {
-            lookup = p;
-        }
-    }
-    // the marker function stores the quest it is given first: mov [rcx+state], edx
-    for (BYTE* p = function; p && p < function + 0x100 && s_markerStateOffset < 0; p++) {
-        if (p[0] == 0x89 && p[1] == 0x91) {
-            s_markerStateOffset = *(INT32*)(p + 2);
-        }
-    }
-    ModsLog("quest target effect: marker function=%p lookup=%p state=%X", function, lookup, s_markerStateOffset);
-    if (!lookup || s_markerStateOffset < 0 || s_npcIdOffset < 0 || !s_queryQuestMonsters || !s_questCount) {
-        return;
-    }
-    s_markerEffects = (const char**)ResolveRip(lookup + 3, lookup + 7);
-    s_effectsOffset = *(INT32*)(lookup + 14);
-    s_findEffect = (FindEffect_t)ResolveRip(lookup + 23, lookup + 27);
-    real_SetQuestMarker = (SetQuestMarker_t)function;
-    AttachHook(&(PVOID&)real_SetQuestMarker, zzSetQuestMarker);
-}
-
 /// The function holding an instruction that loads the given address through a RIP-relative mov or lea.
 static BYTE* FunctionLoading(HMODULE game, const void* target) {
     BYTE* end = (BYTE*)game + ModuleImageSize(game) - 8;
@@ -346,23 +314,54 @@ static volatile int* FindQuestCount(HMODULE game) {
     return (volatile int*)best;
 }
 
+namespace {
+
+struct Place {
+    // 5.x: the name builder of an NPC puts the icon of the quest needing it in front of the name itself
+    bool native = false;
+    QueryQuestMonsters_t query = nullptr;
+    void* table = nullptr;
+    volatile int* count = nullptr;
+    int npcIdOffset = -1;
+    CollectionDone_t collectionDone = nullptr;
+    void** talkTable = nullptr;
+    QuestTalks_t talks = nullptr;
+    ItemCollected_t itemCollected = nullptr;
+    QuestIconType_t iconType = nullptr;
+    QuestIcon_t icon = nullptr;
+    // the name builder after its optional icon, and the stub that fits its registers
+    BYTE* join = nullptr;
+    void (*stub)() = nullptr;
+    // the quest target effect: present in the client, or the marker function, its effect lookup and where it keeps the marker state
+    bool effectNative = false;
+    BYTE* markerFunction = nullptr;
+    BYTE* markerLookup = nullptr;
+    INT32 markerStateOffset = -1;
+};
+
+/// The icon block of the 5.x name builder: mov ecx, [tracker entry + icon type]; cmp ecx, 14 (no icon); jz; call <icon markup>;
+/// mov edx, 256 (the line length)
+bool ShowsIconsItself(HMODULE game) {
+    return FindPattern(game, "8B 48 ?? 83 F9 0E 74 ?? E8 ?? ?? ?? ?? BA 00 01 00 00") != nullptr;
+}
+
 /// The conditions a quest's targets need besides its step, as the client's quest navigation asks them: call <collection done>; test
 /// eax, eax; jz; cmp [talk table], r15; jz; lea r9, [rsp+x]; movzx edx, bpl; ...; call <talk lookup>. The talk lookup is found by
 /// itself, as it loads the same table first: sub rsp, 58h; three register saves; mov r11d, ecx; mov rcx, [table]; xor esi, esi.
-static void FindTalkConditions(HMODULE game) {
+void FindTalkConditions(HMODULE game, Place& place) {
     BYTE* site = FindPattern(game, "E8 ?? ?? ?? ?? 85 C0 0F 84 ?? ?? ?? ?? 4C 39 3D ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 4C 8D 8C 24 ?? ?? ?? ?? 40 0F B6 D5");
     BYTE* talks = FindPattern(game, "48 83 EC 58 48 89 74 24 70 4C 89 6C 24 48 4C 89 74 24 40 44 8B D9 48 8B 0D ?? ?? ?? ?? 33 F6 4C 8B 51 08");
     if (!site || !talks || ResolveRip(site + 16, site + 20) != ResolveRip(talks + 25, talks + 29)) {
         return;
     }
-    s_collectionDone = (CollectionDone_t)ResolveRip(site + 1, site + 5);
-    s_questTalkTable = (void**)ResolveRip(site + 16, site + 20);
-    s_questTalks = (QuestTalks_t)talks;
+    place.collectionDone = (CollectionDone_t)ResolveRip(site + 1, site + 5);
+    place.talkTable = (void**)ResolveRip(site + 16, site + 20);
+    place.talks = (QuestTalks_t)talks;
 }
 
 /// The item check, where the client skips a table entry: mov r8d, [entry+16]; test r8d, r8d; jle; ...; lea rcx, [quest manager];
-/// ...; call. The function most of those places call.
-static void FindItemCollected(HMODULE game) {
+/// ...; call. The function most of those places call, if at least three do.
+ItemCollected_t FindItemCollected(HMODULE game) {
     std::map<BYTE*, int> votes;
     for (BYTE* p : FindAllPatterns(game, "44 8B ?? 10 45 85 C0 7E")) {
         if ((p[2] & 0xF8) != 0x40) {
@@ -379,62 +378,134 @@ static void FindItemCollected(HMODULE game) {
             }
         }
     }
+    BYTE* best = nullptr;
     int bestVotes = 0;
     for (auto& vote : votes) {
         if (vote.second > bestVotes) {
-            s_itemCollected = (ItemCollected_t)vote.first;
+            best = vote.first;
             bestVotes = vote.second;
         }
     }
-    if (bestVotes < 3) {
-        s_itemCollected = nullptr;
-    }
+    return bestVotes >= 3 ? (ItemCollected_t)best : nullptr;
 }
 
-void InstallQuestTargets(HMODULE game) {
+/// For clients that do not show the quest target effect themselves: the marker function names the marker effects, then looks
+/// one up: lea rcx, [kind*3]; lea rax, [table]; lea rdx, [state+rcx*4]; mov rcx, [npc+effects]; mov rdx, [rax+rdx*8]; call
+void FindMarkerFunction(HMODULE game, Place& place) {
+    if (FindBytes(game, QUEST_TARGET_EFFECT, sizeof(QUEST_TARGET_EFFECT))) {
+        place.effectNative = true;
+        return;
+    }
+    const void* name = FindBytes(game, FIRST_MARKER_EFFECT, sizeof(FIRST_MARKER_EFFECT));
+    BYTE* nameLea = name ? FindLeaTo(game, name) : nullptr;
+    BYTE* function = nameLea ? FunctionStart(nameLea) : nullptr;
+    for (BYTE* p = function; p && p < function + 0x800 && !place.markerLookup; p++) {
+        if (memcmp(p, "\x48\x8D\x05", 3) == 0 && memcmp(p + 7, "\x48\x8D\x14\x8F\x48\x8B\x8B", 7) == 0 && memcmp(p + 18, "\x48\x8B\x14\xD0\xE8", 5) == 0) {
+            place.markerLookup = p;
+        }
+    }
+    // the marker function stores the quest it is given first: mov [rcx+state], edx
+    for (BYTE* p = function; p && p < function + 0x100 && place.markerStateOffset < 0; p++) {
+        if (p[0] == 0x89 && p[1] == 0x91) {
+            place.markerStateOffset = *(INT32*)(p + 2);
+        }
+    }
+    place.markerFunction = function;
+}
+
+Place Locate(HMODULE game) {
+    Place place;
     // the query walks the table's tree first: mov r10, [table + 16]
     BYTE* query = FindPattern(game, "48 89 4C 24 08 48 83 EC 78 4C 8B 15 ?? ?? ?? ?? 48 89 6C 24 68 4C 89 7C 24 38 49 8B 42 08 49 8B E9 45 8B F8 80 78 29 00");
     if (query) {
-        s_queryQuestMonsters = (QueryQuestMonsters_t)query;
-        s_questMonsterTable = ResolveRip(query + 12, query + 16) - 16;
+        place.query = (QueryQuestMonsters_t)query;
+        place.table = ResolveRip(query + 12, query + 16) - 16;
+    } else if (ShowsIconsItself(game)) {
+        place.native = true;
+        return place;
     }
-    s_questCount = FindQuestCount(game);
-    s_npcIdOffset = FindNpcIdOffset(game);
-    FindTalkConditions(game);
-    FindItemCollected(game);
-    ModsLog("quest targets: collection done=%p talk table=%p talks=%p item collected=%p", s_collectionDone, s_questTalkTable, s_questTalks,
-        s_itemCollected);
+    place.count = FindQuestCount(game);
+    place.npcIdOffset = FindNpcIdOffset(game);
+    FindTalkConditions(game, place);
+    place.itemCollected = FindItemCollected(game);
     // the icon of a quest in the quest window
-    s_questIconType = (QuestIconType_t)FindPattern(game,
+    place.iconType = (QuestIconType_t)FindPattern(game,
         "48 89 4C 24 08 B8 ?? ?? 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 89 AC 24 ?? ?? 00 00 48 8D 4C 24 40 48 89 BC 24 ?? ?? 00 00 8B FA BD 01 00 00 00 E8");
     // the icon markup comes from a table of graphic character names starting with quest_givable
     const void* iconName = FindBytes(game, FIRST_QUEST_ICON, sizeof(FIRST_QUEST_ICON));
     UINT64 namePointer = (UINT64)iconName;
     const void* iconTable = iconName ? FindBytes(game, &namePointer, sizeof(namePointer)) : nullptr;
-    s_questIcon = iconTable ? (QuestIcon_t)FunctionLoading(game, iconTable) : nullptr;
+    place.icon = iconTable ? (QuestIcon_t)FunctionLoading(game, iconTable) : nullptr;
 
     // the name builder after its optional icon: mov ebx, eax; jmp; mov edi, [rsp+x]; test edi, edi; jnz
     BYTE* join = FindPattern(game, "8B D8 EB 04 8B 7C 24 ?? 85 FF 0F 85");
     // mov rax, <line index>; shl rax, 9; lea rcx, [rsp+rax+lines]
     static const BYTE LINE_R12[] = { 0x49, 0x8B, 0xC4, 0x48, 0xC1, 0xE0, 0x09, 0x48, 0x8D, 0x8C, 0x04 };
     static const BYTE LINE_RBP[] = { 0x48, 0x8B, 0xC5, 0x48, 0xC1, 0xE0, 0x09, 0x48, 0x8D, 0x8C, 0x04 };
-    void (*stub)() = nullptr;
     BYTE* builder = join ? FunctionStart(join) : nullptr;
-    for (BYTE* p = builder; p && p < builder + 0x60 && !stub; p++) {
+    for (BYTE* p = builder; p && p < builder + 0x60 && !place.stub; p++) {
         // the name owner is the third argument, kept in r15 or r14: mov r15, r8 / mov r14, r8
         if (p[0] == 0x4D && p[1] == 0x8B && p[2] == 0xF8 && memcmp(join - 20, LINE_R12, sizeof(LINE_R12)) == 0) {
-            stub = QuestIconStubR15R12;
+            place.stub = QuestIconStubR15R12;
         } else if (p[0] == 0x4D && p[1] == 0x8B && p[2] == 0xF0 && memcmp(join - 20, LINE_RBP, sizeof(LINE_RBP)) == 0) {
-            stub = QuestIconStubR14Rbp;
+            place.stub = QuestIconStubR14Rbp;
         }
     }
-    InstallQuestTargetEffect(game);
+    place.join = join;
+    FindMarkerFunction(game, place);
+    return place;
+}
+
+/// Hooks the marker function so that it shows the quest target effect on the gatherable objects a quest in progress needs.
+void ApplyQuestTargetEffect(const Place& place) {
+    if (place.effectNative) {
+        return;
+    }
+    ModsLog("quest target effect: marker function=%p lookup=%p state=%X", place.markerFunction, place.markerLookup, place.markerStateOffset);
+    BYTE* lookup = place.markerLookup;
+    if (!lookup || place.markerStateOffset < 0 || s_npcIdOffset < 0 || !s_queryQuestMonsters || !s_questCount) {
+        return;
+    }
+    s_markerStateOffset = place.markerStateOffset;
+    s_markerEffects = (const char**)ResolveRip(lookup + 3, lookup + 7);
+    s_effectsOffset = *(INT32*)(lookup + 14);
+    s_findEffect = (FindEffect_t)ResolveRip(lookup + 23, lookup + 27);
+    real_SetQuestMarker = (SetQuestMarker_t)place.markerFunction;
+    AttachHook(&(PVOID&)real_SetQuestMarker, zzSetQuestMarker);
+}
+
+void Apply(const Place& place) {
+    if (place.native) {
+        ModsLog("quest targets: the client shows quest icons itself");
+        ReportStatus(InstallStatus::NotApplicable);
+        return;
+    }
+    s_queryQuestMonsters = place.query;
+    s_questMonsterTable = place.table;
+    s_questCount = place.count;
+    s_npcIdOffset = place.npcIdOffset;
+    s_collectionDone = place.collectionDone;
+    s_questTalkTable = place.talkTable;
+    s_questTalks = place.talks;
+    s_itemCollected = place.itemCollected;
+    s_questIconType = place.iconType;
+    s_questIcon = place.icon;
+    ModsLog("quest targets: collection done=%p talk table=%p talks=%p item collected=%p", s_collectionDone, s_questTalkTable, s_questTalks,
+        s_itemCollected);
+    ApplyQuestTargetEffect(place);
+    BYTE* join = place.join;
     ModsLog("quest targets: query=%p table=%p count=%p id=%X type=%p icon=%p join=%p stub=%p", s_queryQuestMonsters, s_questMonsterTable,
-        s_questCount, s_npcIdOffset, s_questIconType, s_questIcon, join, stub);
-    if (!s_queryQuestMonsters || !s_questCount || s_npcIdOffset < 0 || !s_questIconType || !s_questIcon || !stub) {
+        s_questCount, s_npcIdOffset, s_questIconType, s_questIcon, join, place.stub);
+    if (!s_queryQuestMonsters || !s_questCount || s_npcIdOffset < 0 || !s_questIconType || !s_questIcon || !place.stub) {
         return;
     }
     g_questIconLines = *(INT32*)(join - 9);
     g_questIconResume = join + 8;
-    AttachHook(&g_questIconResume, stub);
+    AttachHook(&g_questIconResume, place.stub);
+}
+
+} // namespace
+
+void InstallQuestTargets(HMODULE game) {
+    LocateThenApply(game, Locate, Apply);
 }

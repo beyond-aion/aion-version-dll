@@ -28,13 +28,14 @@ typedef void*(__fastcall* SetStatTooltip_t)(void* tooltip, void* widget, float c
 static SetStatValue_t real_SetStatValue = nullptr;
 static SetStatTooltip_t real_SetStatTooltip = nullptr;
 
-static bool Redirect(BYTE* dispAt, BYTE* nextInsn, const void* target) {
-    INT64 disp = (BYTE*)target - nextInsn;
+/// Points a RIP-relative displacement, kept by the search, at target; the instruction ends 4 bytes after it.
+static bool Redirect(const CodePatch& displacement, const void* target) {
+    INT64 disp = (BYTE*)target - (displacement.at + 4);
     if (disp < INT_MIN || disp > INT_MAX) {
         return false;
     }
     INT32 value = (INT32)disp;
-    return PatchMemory(dispAt, &value, sizeof(value));
+    return ApplyPatch(displacement, &value);
 }
 
 /// Fewest decimals (at least one) that show the value without losing digits.
@@ -79,23 +80,39 @@ static void* __fastcall zzSetStatTooltip(void* tooltip, void* widget, float curr
     return real_SetStatTooltip(tooltip, widget, current, base, title, invertColors);
 }
 
-/// Points every string with a one-decimal float placeholder, and every use of the rounding constants 10 and 0.05, at copies
-/// the hooks can change. Returns the number of places changed.
-static int RedirectFunction(HMODULE game, BYTE* function) {
+namespace {
+
+/// An operand of a stat function to point at the copies the hooks change.
+struct Operand {
+    enum Kind { Format, Scale, Offset } kind;
+    CodePatch displacement;
+    const wchar_t* text; // the format, for Format
+};
+
+struct Place {
+    HMODULE game = nullptr;
+    BYTE* value = nullptr;   // the function that fills a stat in the character window
+    BYTE* tooltip = nullptr; // the 5.x tooltip function, or nullptr
+    std::vector<Operand> valueOperands;
+    std::vector<Operand> tooltipOperands;
+    std::vector<CodePatch> increments; // the inc eax of the attack delay, to become a nop
+};
+
+/// Every string with a one-decimal float placeholder, and every use of the rounding constants 10 and 0.05, in the function.
+std::vector<Operand> FindOperands(HMODULE game, BYTE* function, int& formats) {
+    std::vector<Operand> operands;
     BYTE* end = FunctionBodyEnd(function, 0x1000);
-    int changed = 0;
     for (BYTE* p = function; p < end - 8; p++) {
         // lea reg, [rip+string]
         if ((p[0] == 0x48 || p[0] == 0x4C) && p[1] == 0x8D && (p[2] & 0xC7) == 0x05) {
             auto text = (const wchar_t*)ResolveRip(p + 3, p + 7);
-            if (!InModule(game, text, FORMAT_LENGTH * sizeof(wchar_t)) || s_data->formatCount >= MAX_FORMATS) {
+            if (!InModule(game, text, FORMAT_LENGTH * sizeof(wchar_t)) || formats >= MAX_FORMATS) {
                 continue;
             }
             size_t length = wcsnlen(text, FORMAT_LENGTH);
             if (length < FORMAT_LENGTH && (wcsstr(text, L"%.1f") || wcsstr(text, L"%+.1f"))) {
-                wchar_t* copy = s_data->formats[s_data->formatCount++];
-                wcscpy_s(copy, FORMAT_LENGTH, text);
-                changed += Redirect(p + 3, p + 7, copy);
+                operands.push_back({ Operand::Format, ExpectBytes(p + 3, sizeof(INT32)), text });
+                formats++;
             }
             continue;
         }
@@ -107,20 +124,20 @@ static int RedirectFunction(HMODULE game, BYTE* function) {
                 continue;
             }
             if (*value == 10.0f) {
-                changed += Redirect(op + 3, op + 7, &s_data->roundScale);
+                operands.push_back({ Operand::Scale, ExpectBytes(op + 3, sizeof(INT32)), nullptr });
             } else if (*value == 0.05f) {
-                changed += Redirect(op + 3, op + 7, &s_data->roundOffset);
+                operands.push_back({ Operand::Offset, ExpectBytes(op + 3, sizeof(INT32)), nullptr });
             }
         }
     }
-    return changed;
+    return operands;
 }
 
-/// 5.x shows attack speed as (delay + 1) / 1000, which one decimal rounds away but more show as 2.801 for a delay of 2800 ms. Drops
-/// the increment: movzx eax, word [stat]; ...; inc eax; ...; movd xmm, eax. Returns the number of places changed.
-static int DropAttackDelayIncrement(HMODULE game, const void* widgetName) {
+/// 5.x shows attack speed as (delay + 1) / 1000, which one decimal rounds away but more show as 2.801 for a delay of 2800 ms. The
+/// increment to drop: movzx eax, word [stat]; ...; inc eax; ...; movd xmm, eax.
+std::vector<CodePatch> FindAttackDelayIncrements(HMODULE game, const void* widgetName) {
     static const BYTE NOP2[] = { 0x66, 0x90 };
-    int changed = 0;
+    std::vector<CodePatch> increments;
     BYTE* end = (BYTE*)game + ModuleImageSize(game) - 0x40;
     for (BYTE* c : FindAllLeasTo(game, widgetName)) {
         if (c < (BYTE*)game + 0x20 || c > end) {
@@ -138,31 +155,67 @@ static int DropAttackDelayIncrement(HMODULE game, const void* widgetName) {
                 moved |= q[0] == 0x66 && q[1] == 0x0F && q[2] == 0x6E && (q[3] & 0xC7) == 0xC0;
             }
             if (loaded && moved) {
-                changed += PatchMemory(p, NOP2, sizeof(NOP2));
+                increments.push_back(PlanPatch(p, NOP2, sizeof(NOP2)));
             }
+        }
+    }
+    return increments;
+}
+
+Place Locate(HMODULE game) {
+    Place place;
+    place.game = game;
+    const void* widgetName = FindBytes(game, ATTACK_SPEED_WIDGET, sizeof(ATTACK_SPEED_WIDGET));
+    BYTE* lookup = widgetName ? FindLeaTo(game, widgetName) : nullptr;
+    for (BYTE* p = lookup; p && p < lookup + 0x80; p++) {
+        if (p[0] == 0xE8) {
+            place.value = ResolveRip(p + 1, p + 5);
+            break;
+        }
+    }
+    const void* difference = FindBytes(game, SEPARATE_TOOLTIP_DIFFERENCE, sizeof(SEPARATE_TOOLTIP_DIFFERENCE));
+    BYTE* differenceLea = difference ? FindLeaTo(game, difference) : nullptr;
+    place.tooltip = differenceLea ? FunctionStart(differenceLea) : nullptr;
+    if (!place.value || !InModule(game, place.value, 16)) {
+        return place;
+    }
+    int formats = 0;
+    place.valueOperands = FindOperands(game, place.value, formats);
+    if (place.tooltip) {
+        place.tooltipOperands = FindOperands(game, place.tooltip, formats);
+    }
+    if (!place.valueOperands.empty()) {
+        place.increments = FindAttackDelayIncrements(game, widgetName);
+    }
+    return place;
+}
+
+/// Points the operands at the copies in s_data. Returns the number of places changed.
+int RedirectOperands(const std::vector<Operand>& operands) {
+    int changed = 0;
+    for (const Operand& operand : operands) {
+        switch (operand.kind) {
+            case Operand::Format: {
+                wchar_t* copy = s_data->formats[s_data->formatCount++];
+                wcscpy_s(copy, FORMAT_LENGTH, operand.text);
+                changed += Redirect(operand.displacement, copy);
+                break;
+            }
+            case Operand::Scale: changed += Redirect(operand.displacement, &s_data->roundScale); break;
+            case Operand::Offset: changed += Redirect(operand.displacement, &s_data->roundOffset); break;
         }
     }
     return changed;
 }
 
 /// Shows attack, casting and movement speed in the character window with as many decimals as the value has, up to three.
-void InstallStatPrecision(HMODULE game) {
-    const void* widgetName = FindBytes(game, ATTACK_SPEED_WIDGET, sizeof(ATTACK_SPEED_WIDGET));
-    BYTE* lookup = widgetName ? FindLeaTo(game, widgetName) : nullptr;
-    for (BYTE* p = lookup; p && p < lookup + 0x80; p++) {
-        if (p[0] == 0xE8) {
-            real_SetStatValue = (SetStatValue_t)ResolveRip(p + 1, p + 5);
-            break;
-        }
-    }
-    const void* difference = FindBytes(game, SEPARATE_TOOLTIP_DIFFERENCE, sizeof(SEPARATE_TOOLTIP_DIFFERENCE));
-    BYTE* differenceLea = difference ? FindLeaTo(game, difference) : nullptr;
-    real_SetStatTooltip = differenceLea ? (SetStatTooltip_t)FunctionStart(differenceLea) : nullptr;
-    if (!real_SetStatValue || !InModule(game, real_SetStatValue, 16)) {
+void Apply(const Place& place) {
+    if (!place.value || !InModule(place.game, place.value, 16)) {
         ModsLog("stat precision: value function not found");
         return;
     }
-
+    real_SetStatValue = (SetStatValue_t)place.value;
+    real_SetStatTooltip = (SetStatTooltip_t)place.tooltip;
     DWORD size = 0;
     s_data = (PrecisionData*)DetourAllocateRegionWithinJumpBounds(real_SetStatValue, &size);
     if (!s_data || size < sizeof(PrecisionData)) {
@@ -171,9 +224,14 @@ void InstallStatPrecision(HMODULE game) {
     }
     s_data->roundScale = 10;
     s_data->roundOffset = 0.05f;
-    int valueChanges = RedirectFunction(game, (BYTE*)real_SetStatValue);
-    int tooltipChanges = real_SetStatTooltip ? RedirectFunction(game, (BYTE*)real_SetStatTooltip) : 0;
-    int incrementChanges = valueChanges ? DropAttackDelayIncrement(game, widgetName) : 0;
+    int valueChanges = RedirectOperands(place.valueOperands);
+    int tooltipChanges = RedirectOperands(place.tooltipOperands);
+    int incrementChanges = 0;
+    if (valueChanges) {
+        for (const CodePatch& increment : place.increments) {
+            incrementChanges += ApplyPatch(increment);
+        }
+    }
     ModsLog("stat precision: value=%p (%d changes) tooltip=%p (%d changes) attack delay increments=%d", real_SetStatValue, valueChanges,
         real_SetStatTooltip, tooltipChanges, incrementChanges);
     if (valueChanges) {
@@ -182,4 +240,10 @@ void InstallStatPrecision(HMODULE game) {
     if (tooltipChanges) {
         AttachHook(&(PVOID&)real_SetStatTooltip, zzSetStatTooltip);
     }
+}
+
+} // namespace
+
+void InstallStatPrecision(HMODULE game) {
+    LocateThenApply(game, Locate, Apply);
 }
