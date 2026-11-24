@@ -220,6 +220,46 @@ BYTE* FunctionBodyEnd(BYTE* start, size_t maxSize) {
     return start + maxSize;
 }
 
+CodePatch ExpectBytes(BYTE* at, size_t size) {
+    CodePatch patch;
+    if (!at || size > CodePatch::MAX_SIZE) {
+        return patch;
+    }
+    patch.at = at;
+    patch.size = size;
+    memcpy(patch.expected, at, size);
+    memcpy(patch.value, at, size);
+    return patch;
+}
+
+CodePatch PlanPatch(BYTE* at, const void* value, size_t size) {
+    CodePatch patch = ExpectBytes(at, size);
+    if (patch) {
+        memcpy(patch.value, value, size);
+    }
+    return patch;
+}
+
+bool ApplyPatch(const CodePatch& place, const void* value) {
+    CodePatch patch = place;
+    if (patch) {
+        memcpy(patch.value, value, patch.size);
+    }
+    return ApplyPatch(patch);
+}
+
+bool ApplyPatch(const CodePatch& patch) {
+    if (!patch) {
+        return false;
+    }
+    if (memcmp(patch.at, patch.expected, patch.size) != 0) {
+        MODULE_LOG("patch at %p skipped: the bytes there changed since the search", patch.at);
+        ReportWrite(patch.at, false);
+        return false;
+    }
+    return PatchMemory(patch.at, patch.value, patch.size);
+}
+
 bool PatchMemory(void* at, const void* value, size_t size) {
     DWORD oldProtect;
     // code and data share one section in some clients

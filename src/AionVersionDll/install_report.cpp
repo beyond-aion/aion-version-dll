@@ -31,6 +31,24 @@ static int s_count = 0;
 static SRWLOCK s_lock = SRWLOCK_INIT;
 static thread_local int t_current = -1;
 static bool s_finalSummaryDone = false;
+static thread_local bool t_locating = false;
+
+LocatePhase::LocatePhase() : m_outer(t_locating) {
+    t_locating = true;
+}
+
+LocatePhase::~LocatePhase() {
+    t_locating = m_outer;
+}
+
+/// A change during a search breaks the split of search and change, so it is logged.
+static bool ChangedWhileLocating(const void* at) {
+    if (!t_locating) {
+        return false;
+    }
+    ModsLog("change at %p during a search, which must only read", at);
+    return true;
+}
 
 static LONGLONG Now() {
     LARGE_INTEGER t;
@@ -234,6 +252,7 @@ void ReportSearch(size_t count) {
 }
 
 void ReportWrite(const void* at, bool done) {
+    done = done && !ChangedWhileLocating(at);
     UpdateCurrent([&](Entry& e) {
         if (done) {
             e.writes++;
@@ -249,8 +268,9 @@ void ReportWrite(const void* at, bool done) {
 LONG AttachHook(PVOID* real, PVOID hook) {
     PVOID target = *real;
     LONG error = DetourAttach(real, hook);
+    bool misplaced = ChangedWhileLocating(target);
     UpdateCurrent([&](Entry& e) {
-        if (error == NO_ERROR) {
+        if (error == NO_ERROR && !misplaced) {
             e.hooks++;
             if (!e.firstChange) {
                 e.firstChange = target;

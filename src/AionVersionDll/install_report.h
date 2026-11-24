@@ -47,6 +47,18 @@ private:
     LONGLONG m_started;
 };
 
+/// Marks the search of a fix or mod, which only reads: a change or a hook meanwhile is logged as a mistake of the code and counts as failed.
+class LocatePhase {
+public:
+    LocatePhase();
+    ~LocatePhase();
+    LocatePhase(const LocatePhase&) = delete;
+    LocatePhase& operator=(const LocatePhase&) = delete;
+
+private:
+    bool m_outer;
+};
+
 /// Sets the status of the current fix or mod where the counts would tell it wrong. Of several, the most telling one stays: a failure over a
 /// skip, a skip over a success.
 void ReportStatus(InstallStatus status);

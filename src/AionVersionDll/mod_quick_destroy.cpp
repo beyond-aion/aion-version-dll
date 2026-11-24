@@ -49,38 +49,60 @@ std::vector<BYTE*> Callers(HMODULE game, BYTE* target) {
     return callers;
 }
 
-/// Points a direct call at another function.
-bool Retarget(BYTE* call, BYTE* function) {
+struct Place {
+    BYTE* usual = nullptr;
+    BYTE* cash = nullptr;
+    BYTE* rare = nullptr;
+    // the calls of the typed questions from the windows that destroy an item, pointed at the usual question
+    std::vector<CodePatch> calls;
+};
+
+/// A direct call pointed at another function.
+CodePatch Retarget(BYTE* call, BYTE* function) {
     INT32 distance = (INT32)(function - (call + 5));
-    return PatchMemory(call + 1, &distance, sizeof(distance));
+    return PlanPatch(call + 1, &distance, sizeof(distance));
 }
 
-} // namespace
-
-void InstallQuickDestroy(HMODULE game) {
+Place Locate(HMODULE game) {
+    Place place;
     std::vector<BYTE*> buttons = FindValues(game, YES_BUTTON);
-    BYTE* usual = FindQuestion(game, USUAL_QUESTION, buttons);
-    BYTE* cash = FindQuestion(game, CASH_ITEM_QUESTION, buttons);
-    BYTE* rare = FindQuestion(game, RARE_ITEM_QUESTION, buttons);
-    if (!usual || (!cash && !rare)) {
-        ModsLog("quick destroy: usual=%p cash=%p rare=%p", usual, cash, rare);
-        return;
+    place.usual = FindQuestion(game, USUAL_QUESTION, buttons);
+    place.cash = FindQuestion(game, CASH_ITEM_QUESTION, buttons);
+    place.rare = FindQuestion(game, RARE_ITEM_QUESTION, buttons);
+    if (!place.usual || (!place.cash && !place.rare)) {
+        return place;
     }
     // The windows that destroy an item pick one of the three questions, so a call is changed only in a function that also calls the
     // usual one; any other caller keeps its question.
-    std::vector<BYTE*> windows = Callers(game, usual);
-    int retargeted = 0;
-    for (BYTE* question : { cash, rare }) {
+    std::vector<BYTE*> windows = Callers(game, place.usual);
+    for (BYTE* question : { place.cash, place.rare }) {
         if (!question) {
             continue;
         }
         for (BYTE* call : FindAllCallsTo(game, question)) {
             BYTE* function = FunctionStart(call);
-            bool window = function && std::find(windows.begin(), windows.end(), function) != windows.end();
-            if (window && Retarget(call, usual)) {
-                retargeted++;
+            if (function && std::find(windows.begin(), windows.end(), function) != windows.end()) {
+                place.calls.push_back(Retarget(call, place.usual));
             }
         }
     }
-    ModsLog("quick destroy: usual=%p cash=%p rare=%p, %d calls", usual, cash, rare, retargeted);
+    return place;
+}
+
+void Apply(const Place& place) {
+    if (!place.usual || (!place.cash && !place.rare)) {
+        ModsLog("quick destroy: usual=%p cash=%p rare=%p", place.usual, place.cash, place.rare);
+        return;
+    }
+    int retargeted = 0;
+    for (const CodePatch& call : place.calls) {
+        retargeted += ApplyPatch(call);
+    }
+    ModsLog("quick destroy: usual=%p cash=%p rare=%p, %d calls", place.usual, place.cash, place.rare, retargeted);
+}
+
+} // namespace
+
+void InstallQuickDestroy(HMODULE game) {
+    LocateThenApply(game, Locate, Apply);
 }

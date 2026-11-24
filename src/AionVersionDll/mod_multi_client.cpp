@@ -1,10 +1,17 @@
 #include "mods.h"
-#include <detours/detours.h>
+
+namespace {
+
+struct Place {
+    BYTE* check = nullptr; // cmp dword ptr [reg+count], 2
+    CodePatch jump;
+};
 
 /// The client counts the windows of its class when it starts and closes the other clients if two of them are open:
 /// lea rcx, "Running %d instances."; call log; cmp dword ptr [reg+count], 2; jl start
 /// The jl becomes a jmp, so any number of clients can run.
-void InstallMultiClient(HMODULE game) {
+Place Locate(HMODULE game) {
+    Place place;
     static const char RUNNING[] = "Running %d instances.";
     const void* text = FindBytes(game, RUNNING, sizeof(RUNNING));
     BYTE* lea = text ? FindLeaTo(game, text) : nullptr;
@@ -22,15 +29,30 @@ void InstallMultiClient(HMODULE game) {
         }
         if (jump[0] == 0x0F && jump[1] == 0x8C) {
             static const BYTE NEAR_JMP[] = { 0x90, 0xE9 };
-            PatchMemory(jump, NEAR_JMP, sizeof(NEAR_JMP));
+            place.jump = PlanPatch(jump, NEAR_JMP, sizeof(NEAR_JMP));
         } else if (jump[0] == 0x7C) {
             static const BYTE SHORT_JMP = 0xEB;
-            PatchMemory(jump, &SHORT_JMP, 1);
+            place.jump = PlanPatch(jump, &SHORT_JMP, 1);
         } else {
             continue;
         }
-        ModsLog("multi client: instance check at %p", p);
+        place.check = p;
+        break;
+    }
+    return place;
+}
+
+void Apply(const Place& place) {
+    if (!place.check) {
+        ModsLog("multi client: instance check not found");
         return;
     }
-    ModsLog("multi client: instance check not found");
+    ApplyPatch(place.jump);
+    ModsLog("multi client: instance check at %p", place.check);
+}
+
+} // namespace
+
+void InstallMultiClient(HMODULE game) {
+    LocateThenApply(game, Locate, Apply);
 }

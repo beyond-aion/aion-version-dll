@@ -51,6 +51,41 @@ void RestoreImportCalls(HMODULE module);
 /// Overwrites code or read-only data.
 bool PatchMemory(void* at, const void* value, size_t size);
 
+/// A change found by a search: where, the bytes the search saw there and the bytes to put instead.
+struct CodePatch {
+    static constexpr size_t MAX_SIZE = 16;
+    BYTE* at = nullptr;
+    size_t size = 0;
+    BYTE expected[MAX_SIZE] = {};
+    BYTE value[MAX_SIZE] = {};
+
+    explicit operator bool() const { return at != nullptr; }
+};
+
+/// Plans a change of the bytes at at to value, keeping the bytes there now. Only reads, so it belongs to a search.
+CodePatch PlanPatch(BYTE* at, const void* value, size_t size);
+
+/// Keeps the bytes at at for a change whose value the setting decides later; the search stays the same whatever mods.ini says.
+CodePatch ExpectBytes(BYTE* at, size_t size);
+
+/// Writes a planned change if the bytes there are still the ones the search saw; otherwise, as when DXVK, an overlay or another mod changed
+/// them meanwhile, logs it and counts the change as failed.
+bool ApplyPatch(const CodePatch& patch);
+
+/// The same with the value given now, for a place kept by ExpectBytes.
+bool ApplyPatch(const CodePatch& place, const void* value);
+
+/// Installs a fix or mod split into its search, which only reads the client, and its change, which uses only what the search found.
+template <typename Place>
+void LocateThenApply(HMODULE module, Place (*locate)(HMODULE module), void (*apply)(const Place& place)) {
+    Place place;
+    {
+        LocatePhase phase;
+        place = locate(module);
+    }
+    apply(place);
+}
+
 /// Resolves the target of a RIP-relative operand whose 32-bit displacement starts at dispAt and whose instruction ends at nextInsn.
 inline BYTE* ResolveRip(BYTE* dispAt, BYTE* nextInsn) {
     return nextInsn + *(INT32*)dispAt;
