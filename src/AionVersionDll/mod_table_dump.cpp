@@ -183,6 +183,8 @@ DumpMethod_t s_real[MAX_METHODS];
 bool s_dumpActive = false;
 volatile bool s_writerSeen = false;
 bool s_isWriter[MAX_METHODS] = {};
+std::wstring s_flagsIni;   // Data\Dump\TableDump.ini in 4.x, data\dump\config.ini in 5.x
+bool s_digitFlags = false; // 5.x writes 1/0, 4.x writes true/false
 void WriterStarted();
 
 template <int N>
@@ -247,43 +249,63 @@ std::wstring ClientRoot() {
     return root;
 }
 
-/// Data\Dump\TableDump.ini, where the client marks whether the dumps on disk are complete (NormalStop).
-const std::wstring& TablesIniPath() {
-    static std::wstring path = ClientRoot() + L"\\Data\\Dump\\TableDump.ini";
-    return path;
+/// Data\Dump\TableDump.ini (4.x) and data\dump\config.ini (5.x): where the client marks whether the table dumps on disk are complete.
+std::wstring FourXIniPath() {
+    return ClientRoot() + L"\\Data\\Dump\\TableDump.ini";
 }
 
-bool ReadNormalStop() {
-    HANDLE file = CreateFileW(TablesIniPath().c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (file == INVALID_HANDLE_VALUE) {
-        return false;
+std::wstring FiveXIniPath() {
+    return ClientRoot() + L"\\data\\dump\\config.ini";
+}
+
+/// The value of a key in the flags ini, as text: "true"/"1", "8" and so on.
+std::string ReadIniValue(const char* name) {
+    if (s_flagsIni.empty()) {
+        return std::string();
     }
-    char text[512] = {};
+    HANDLE file = CreateFileW(s_flagsIni.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return std::string();
+    }
+    char text[1024] = {};
     DWORD read = 0;
     ReadFile(file, text, sizeof(text) - 1, &read, nullptr);
     CloseHandle(file);
-    const char* key = strstr(text, "NormalStop");
+    const char* key = strstr(text, name);
     if (!key) {
-        return false;
+        return std::string();
     }
-    key += strlen("NormalStop");
+    key += strlen(name);
     while (*key == ' ' || *key == '\t') {
         key++;
     }
     if (*key != '=') {
-        return false;
+        return std::string();
     }
     key++;
     while (*key == ' ' || *key == '\t') {
         key++;
     }
-    return _strnicmp(key, "true", 4) == 0 || *key == '1';
+    const char* end = key;
+    while (*end && *end != '\r' && *end != '\n' && *end != ' ' && *end != '\t') {
+        end++;
+    }
+    return std::string(key, end);
 }
 
-void WriteNormalStop(bool value) {
-    WritePrivateProfileStringW(L"Game", L"NormalStop", value ? L"true" : L"false", TablesIniPath().c_str());
+bool ReadNormalStop() {
+    std::string value = ReadIniValue("NormalStop");
+    return _stricmp(value.c_str(), "true") == 0 || value == "1";
+}
+
+void WriteNormalStop(bool complete) {
+    if (s_flagsIni.empty()) {
+        return;
+    }
+    const wchar_t* text = s_digitFlags ? (complete ? L"1" : L"0") : (complete ? L"true" : L"false");
+    WritePrivateProfileStringW(L"Game", L"NormalStop", text, s_flagsIni.c_str());
     // passing a null section flushes the cache of the profile API to the file
-    WritePrivateProfileStringW(nullptr, nullptr, nullptr, TablesIniPath().c_str());
+    WritePrivateProfileStringW(nullptr, nullptr, nullptr, s_flagsIni.c_str());
 }
 
 /// A dump writer runs only for a dump that was missing or rejected, so the flag has to stay false until the loop is over.
@@ -367,6 +389,8 @@ void Apply(const DumpPlaces& places) {
     }
     bool trusted = false;
     if (!g_dryRun) {
+        s_flagsIni = FourXIniPath();
+        s_digitFlags = false;
         // read the flag before the client's own start writes it: true here means the dumps of the last run are complete
         trusted = ReadNormalStop();
         int deleted = DropStaleDumps();
@@ -405,4 +429,28 @@ void MarkDumpsComplete() {
 
 void InstallTableDump(HMODULE game) {
     LocateThenApply(game, Locate, Apply);
+    if (g_dryRun) {
+        return;
+    }
+    // 4.x went through Apply above; 5.x keeps its tables in data\dump\tables.dmp and has its own flags ini
+    std::wstring four = FourXIniPath();
+    std::wstring five = FiveXIniPath();
+    if (GetFileAttributesW(four.c_str()) != INVALID_FILE_ATTRIBUTES || GetFileAttributesW(five.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        return;
+    }
+    s_flagsIni = five;
+    s_digitFlags = true;
+    s_dumpActive = true;
+    bool normalStop = ReadNormalStop();
+    bool valid = ReadIniValue("ValidTableDump") == "1";
+    bool bits = ReadIniValue("BitSize") == "8";
+    WIN32_FILE_ATTRIBUTE_DATA dump = {};
+    bool hasDump = GetFileAttributesExW((ClientRoot() + L"\\data\\dump\\tables.dmp").c_str(), GetFileExInfoStandard, &dump) != FALSE
+        && (dump.nFileSizeHigh > 0 || dump.nFileSizeLow > 0);
+    ModsLog("table dump: 5.x tables.dmp, NormalStop=%d ValidTableDump=%d BitSize=%s tables.dmp=%d", normalStop, valid,
+        ReadIniValue("BitSize").c_str(), hasDump);
+    if (normalStop && valid && bits && hasDump) {
+        CreateThread(nullptr, 0, NormalStopWatch, nullptr, 0, nullptr);
+        ModsLog("table dump: the 5.x dump was complete, keeping NormalStop=1 after the client's start");
+    }
 }
