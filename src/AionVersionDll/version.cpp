@@ -96,8 +96,25 @@ static LONG WINAPI zzSetWindowLongA(_In_ HWND hWnd, _In_ int nIndex, _In_ LONG d
 }
 
 
+/// Loads d3d9.dll before the client does: the DXVK one next to the client if there is one, or with [Graphics] DXVK=0 the one of Windows
+/// from System32, so the client's later LoadLibrary("d3d9.dll") gets the module already loaded under that name and a DXVK d3d9.dll in
+/// bin64 stays unused without being removed.
 static void PreloadDXVK() {
-    LoadLibrary(L"d3d9.dll");
+    bool dxvk = true;
+    ReadSetting({ L"Graphics", L"DXVK", Setting::Bool, &dxvk, 1 });
+    if (dxvk) {
+        LoadLibrary(L"d3d9.dll");
+        return;
+    }
+    wchar_t path[MAX_PATH];
+    UINT length = GetSystemDirectoryW(path, MAX_PATH);
+    if (length == 0 || length + 10 >= MAX_PATH) {
+        ModsLog("dxvk: no system folder, d3d9.dll left to the client");
+        return;
+    }
+    wcscat_s(path, L"\\d3d9.dll");
+    HMODULE d3d9 = LoadLibraryW(path);
+    ModsLog("dxvk: off, %ls loaded at %p", path, d3d9);
 }
 
 static void InstallGraphicsOptionsFixAndCameraFix() {
