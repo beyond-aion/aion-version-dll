@@ -66,6 +66,8 @@ The DLL automatically applies fixes for the following problems:
 ## Performance
 Loads [DXVK](https://github.com/doitsujin/dxvk) if present, which can improve performance and frame times.
 
+The frame rate is no longer capped at 60 (120 in 5.x clients) by default: without `g_maxfps` in `system.cfg` the client now runs unlimited, and a `g_maxfps` set there still applies.
+
 ## Client mods
 Optional additions to the game client, which can be enabled via `mods.ini`:
 - **Chat time:** displays message times in the chat window, as 5.x clients already support.

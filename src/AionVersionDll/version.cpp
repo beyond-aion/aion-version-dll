@@ -92,6 +92,7 @@ void InstallReserveFix();
 void InstallColorTagFix(HMODULE game);
 void InstallServerCheckFix(HMODULE game);
 void InstallPetDecorationFix(HMODULE game);
+void InstallMaxFpsFix(HMODULE game);
 void InstallLightRectFixOnLoad();
 void InstallScreenshotFix();
 
@@ -100,6 +101,7 @@ static const InstallEntry GAME_FIXES[] = {
     { "color_tag_fix", nullptr, InstallColorTagFix },
     { "server_check_fix", nullptr, InstallServerCheckFix },
     { "pet_decoration_fix", nullptr, InstallPetDecorationFix },
+    { "max_fps_fix", nullptr, InstallMaxFpsFix },
 };
 
 static void InstallGameFixes(HMODULE game) {

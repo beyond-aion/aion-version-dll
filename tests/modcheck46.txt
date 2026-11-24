@@ -29,6 +29,7 @@
         color_tag_fix        applied            Game.dll+3F7AE2              writes 1/1, hooks 0/0, searches 3, misses 0, ambiguous 0
         server_check_fix     applied            Game.dll+2DA656              writes 1/1, hooks 0/0, searches 1, misses 0, ambiguous 0
         pet_decoration_fix   not_applicable     -                            writes 0/0, hooks 0/0, searches 2, misses 1, ambiguous 0
+        max_fps_fix          applied            Game.dll+F3B1                writes 1/1, hooks 0/0, searches 3, misses 0, ambiguous 0
         game_state           unchanged          -                            writes 0/0, hooks 0/0, searches 1, misses 0, ambiguous 0
         chat_time            applied            Game.dll+97A1B0              writes 0/0, hooks 4/4, searches 5, misses 1, ambiguous 0
         anti_afk             applied            Game.dll+D9A988              writes 1/1, hooks 0/0, searches 1, misses 0, ambiguous 0
