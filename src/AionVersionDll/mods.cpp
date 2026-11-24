@@ -58,6 +58,7 @@ static const Setting SETTINGS[] = {
     { L"Performance", L"LoadingMode", Setting::Int, &g_modsConfig.fastStart, FAST_START_OFF, FAST_START_OFF, FAST_START_FULL },
     { L"Performance", L"TableDump", Setting::Bool, &g_modsConfig.tableDump, 0 },
     { L"Performance", L"Mimalloc", Setting::Bool, &g_modsConfig.mimalloc, 0 },
+    { L"Performance", L"AnimationLod", Setting::Int, &g_modsConfig.animationLod, 0, 0, 200 },
     { L"UiScale", L"Fit", Setting::Bool, &g_modsConfig.uiScaleFit, 0 },
     { L"UiScale", L"LargeGlyphFrom", Setting::Int, &g_modsConfig.largeGlyphFrom, CLIENT_LARGE_GLYPH_FROM, 8, 64 },
     { L"SystemCfg", L"PlainText", Setting::Bool, &g_modsConfig.plainSystemCfg, 0 },
@@ -135,6 +136,8 @@ static const InstallEntry PROCESS_MODS[] = {
         [](HMODULE) { OnModuleLoad(L"CryFont.dll", InstallGlyphCells, false); } },
     { "fast_start", [] { return Config().fastStart != FAST_START_OFF; }, [](HMODULE) { InstallFastStart(); } },
     { "mimalloc", [] { return Config().mimalloc; }, [](HMODULE) { InstallMimalloc(); } },
+    { "animation_lod", [] { return Config().animationLod != 0; },
+        [](HMODULE) { OnModuleLoad(L"CryAnimation.dll", InstallAnimationLod, false); } },
     { "overlay", [] { return Config().pingOverlayMode != 0 || g_frameStatSeconds > 0; }, [](HMODULE) { InstallOverlay(); } },
     { "plain_system_cfg", [] { return Config().plainSystemCfg; }, [](HMODULE) { InstallPlainSystemCfg(); } },
 };

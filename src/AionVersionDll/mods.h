@@ -35,6 +35,7 @@ struct ModsConfig {
     int fastStart; // FAST_START_*
     bool tableDump;
     bool mimalloc;
+    int animationLod; // meters, 0 = off
     bool plainSystemCfg;
 };
 
@@ -113,6 +114,7 @@ void InstallFastLoad(HMODULE game);
 /// mimalloc in place of the allocators of CrySystem.
 void InstallMimalloc();
 void InstallGlyphCells(HMODULE cryFont);
+void InstallAnimationLod(HMODULE animation);
 void InstallOverlay();
 /// Reads and saves system.cfg in plain text.
 void InstallPlainSystemCfg();

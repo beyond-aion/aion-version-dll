@@ -161,6 +161,7 @@
     <ClCompile Include="mod_fast_start.cpp" />
     <ClCompile Include="mod_mimalloc.cpp" />
     <ClCompile Include="mod_system_cfg.cpp" />
+    <ClCompile Include="mod_anim_lod.cpp" />
     <ClCompile Include="mod_ui_scale.cpp" />
     <ClCompile Include="mod_overlay.cpp" />
     <ClCompile Include="mod_ping.cpp" />
