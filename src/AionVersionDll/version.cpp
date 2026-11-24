@@ -47,8 +47,8 @@ void ApplyGraphicsLimits(const GraphicsLimits& limits) {
     ApplyPatch(limits.second);
 }
 
-void EnableHighQualityGraphicsOptions() {
-    LocateThenApply(GetModuleHandle(L"crysystem"), LocateGraphicsLimits, ApplyGraphicsLimits);
+void EnableHighQualityGraphicsOptions(HMODULE crySystem) {
+    LocateThenApply(crySystem, LocateGraphicsLimits, ApplyGraphicsLimits);
 }
 
 } // namespace
@@ -84,7 +84,7 @@ static decltype(SetWindowLongA)* real_SetWindowLongA = SetWindowLongA;
 static LONG WINAPI zzSetWindowLongA(_In_ HWND hWnd, _In_ int nIndex, _In_ LONG dwNewLong) {
     if (!s_gfxEnabled) {
         InstallScope scope("graphics_options");
-        EnableHighQualityGraphicsOptions();
+        EnableHighQualityGraphicsOptions(GetModuleHandle(L"crysystem"));
         s_gfxEnabled = true;
     }
     {
@@ -135,7 +135,7 @@ static const InstallEntry PROCESS_FIXES[] = {
 /// ones of the fixes run before those of the mods.
 void InstallPatch(HINSTANCE self) {
     OpenModsLog(self);
-    LogClientBuild(GetModuleHandleW(nullptr), "aion.bin");
+    LogClientBuild(ClientModule(), "aion.bin");
     {
         InstallScope scope("process start", true);
         PreloadDXVK();
@@ -144,6 +144,13 @@ void InstallPatch(HINSTANCE self) {
         DetourUpdateThread(GetCurrentThread());
         InstallModuleDumps();
         InstallAll(PROCESS_FIXES, nullptr);
+        if (g_dryRun) {
+            // the client changes the limits once it creates its window, which modcheck has not; the search is checked on the image
+            OnModuleLoad(L"CrySystem.dll", [](HMODULE crySystem) {
+                InstallScope scope("graphics_options");
+                EnableHighQualityGraphicsOptions(crySystem);
+            }, true);
+        }
         OnModuleLoad(L"Game.dll", InstallGameFixes, true);
         InstallMods();
         LONG error = DetourTransactionCommit();

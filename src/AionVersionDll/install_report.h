@@ -29,6 +29,8 @@ enum class InstallStatus : BYTE {
     Unchanged,
     /// Waits for the loader to load the module it changes; set by OnModuleLoad.
     Waiting,
+    /// The client is one the fix or mod is not made for yet, as a mod of 4.x in a 5.x client.
+    Unsupported,
 };
 
 /// Counts what happens until it ends for the fix or mod of the given id. Scopes nest, and the innermost one gets the counts; one of an id
@@ -78,6 +80,10 @@ void ReportWrite(const void* at, bool done);
 /// modcheck: the changes and hooks are counted as made but left out, and the module watch only keeps what it would call, so the summary
 /// tells what a client would get from images of its modules.
 extern bool g_dryRun;
+
+/// The client's own module, aion.bin; in modcheck the image of it put in place, set by SetClientModule.
+HMODULE ClientModule();
+void SetClientModule(HMODULE module);
 
 /// Gives an image that modcheck put in place of a module the name the summary shows for the places in it.
 void NameImage(const wchar_t* name, HMODULE base, size_t size);

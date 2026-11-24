@@ -18,6 +18,11 @@ BYTE* FindIdleCheck(HMODULE module) {
     return FindPattern(module, "2B 83 ?? ?? 00 00 3B 05 ?? ?? ?? ?? 76 ?? 44 8B CD 45 33 C0 BA 14 C2 0D 00");
 }
 
+bool IsClient5x(HMODULE game) {
+    static const wchar_t OPTION_NAME[] = L"ui_scale_fix";
+    return FindBytes(game, OPTION_NAME, sizeof(OPTION_NAME)) != nullptr;
+}
+
 bool IsInWorld() {
     if (!g_gameState) {
         return false;

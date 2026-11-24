@@ -2,11 +2,11 @@
 #include "module_load.h"
 #include <stdio.h>
 
-// [Debug] DumpModules=1 in mods.ini writes the images of the client's modules that the fixes and mods search to dumps\<name>@<base>.dump
-// next to version.dll, for modcheck. Each image is taken once the loader ran the module's entry point, which unpacks a packed one,
-// and before any fix or mod changes it, as the watch is added before theirs: a run for dumps has the mods turned off, so that none
-// changes a module before its entry point either. The file holds the image as it lies in memory, every byte at its RVA; modcheck puts
-// it back at the same base, as the method tables and other data hold absolute addresses.
+// [Debug] DumpModules=1 in mods.ini writes the images of aion.bin and of the client's modules that the fixes and mods search to
+// dumps\<name>@<base>.dump next to version.dll, for modcheck. Each image is taken once the loader ran the module's entry point, which unpacks a
+// packed one, and before any fix or mod changes it, as the watch is added before theirs: a run for dumps has the mods turned off, so that none
+// changes a module before its entry point either. The file holds the image as it lies in memory, every byte at its RVA; modcheck puts it back at the
+// same base, as the method tables and other data hold absolute addresses.
 
 static const wchar_t* const MODULES[] = { L"Game.dll", L"CrySystem.dll", L"CryFont.dll", L"XRenderD3D9.dll" };
 
@@ -45,6 +45,12 @@ static void Dump(HMODULE module) {
     ModsLog("dump: %ls at %p, %zu bytes, %zu pages unreadable", fileName, module, size, unreadable);
 }
 
+/// aion.bin as well once Game.dll is loaded: some clients unpack it only after version.dll is loaded.
+static void DumpWithClient(HMODULE game) {
+    Dump(game);
+    Dump(GetModuleHandleW(nullptr));
+}
+
 void InstallModuleDumps() {
     bool enabled = false;
     ReadSetting({ L"Debug", L"DumpModules", Setting::Bool, &enabled, 0 });
@@ -52,6 +58,6 @@ void InstallModuleDumps() {
         return;
     }
     for (const wchar_t* name : MODULES) {
-        OnModuleLoad(name, Dump, true);
+        OnModuleLoad(name, wcscmp(name, L"Game.dll") == 0 ? DumpWithClient : Dump, true);
     }
 }

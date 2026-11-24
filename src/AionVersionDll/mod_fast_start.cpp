@@ -91,7 +91,7 @@ static bool FindUnloadWait(HMODULE exe) {
 
 /// Some clients unpack aion.bin only after version.dll is loaded, so the code may not be there yet.
 static DWORD WINAPI RetryUnloadWait(LPVOID) {
-    HMODULE exe = GetModuleHandleW(nullptr);
+    HMODULE exe = ClientModule();
     for (int i = 0; i < 1000; i++) {
         if (FindUnloadWait(exe)) {
             return 0;
@@ -1023,7 +1023,8 @@ static void OnCrySystem(HMODULE crySystem) {
     if (!HasImportStubs(crySystem)) {
         HookPakTree(crySystem);
     }
-    if (g_modsConfig.fastStart == FAST_START_FULL && GetModuleHandleW(L"MSVCR120.dll")) {
+    // only 5.x shows logos here; the search finds them by their six limits in one function
+    if (g_modsConfig.fastStart == FAST_START_FULL) {
         SkipIntroLogos(crySystem);
     }
 }
@@ -1299,7 +1300,7 @@ static size_t FindSlot(const DWORD* fields, const FieldIndex& index, const wchar
     size_t mask = index.slots.size() - 1;
     for (size_t slot = hash & mask;; slot = (slot + 1) & mask) {
         int i = index.slots[slot];
-        if (i < 0 || index.hashes[slot] == hash && EqualFolded(FieldName(fields, i), name)) {
+        if (i < 0 || (index.hashes[slot] == hash && EqualFolded(FieldName(fields, i), name))) {
             return slot;
         }
     }
@@ -2012,7 +2013,7 @@ void InstallFastStart() {
         ModsLog("fast start: RAND_poll hooked");
     }
     AttachHook(&(PVOID&)real_GetTickCount, zzGetTickCount);
-    if (!FindUnloadWait(GetModuleHandleW(nullptr))) {
+    if (!FindUnloadWait(ClientModule())) {
         CloseHandle(CreateThread(nullptr, 0, RetryUnloadWait, nullptr, 0, nullptr));
     }
     HMODULE ole32 = LoadLibraryW(L"ole32.dll");

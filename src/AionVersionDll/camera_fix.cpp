@@ -184,7 +184,7 @@ static MSG MakeMouseMove(POINT at) {
 
 static BOOL WINAPI zzSetCursorPos(_In_ int X, _In_ int Y) {
     if (s_rawInput && OnWindowThread() && FromGame(_ReturnAddress())) {
-        if (!s_turning && AnyButtonHeld() && (GetCapture() == s_window || s_releasedMidTurn && X == s_warp.x && Y == s_warp.y)) {
+        if (!s_turning && AnyButtonHeld() && (GetCapture() == s_window || (s_releasedMidTurn && X == s_warp.x && Y == s_warp.y))) {
             StartTurning(X, Y);
         }
         s_releasedMidTurn = false;
@@ -226,7 +226,7 @@ static bool s_keysDown[256];
 
 static void TrackKey(const MSG* msg) {
     bool down = msg->message == WM_KEYDOWN || msg->message == WM_SYSKEYDOWN;
-    if (!down && msg->message != WM_KEYUP && msg->message != WM_SYSKEYUP || msg->wParam >= 256) {
+    if ((!down && msg->message != WM_KEYUP && msg->message != WM_SYSKEYUP) || msg->wParam >= 256) {
         return;
     }
     int vk = (int)msg->wParam;
@@ -289,7 +289,7 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
         s_releasedMidTurn = false;
     }
     bool movesWanted = (!hWnd || hWnd == s_window)
-        && (wMsgFilterMin == 0 && wMsgFilterMax == 0 || wMsgFilterMin <= WM_MOUSEMOVE && WM_MOUSEMOVE <= wMsgFilterMax);
+        && ((wMsgFilterMin == 0 && wMsgFilterMax == 0) || (wMsgFilterMin <= WM_MOUSEMOVE && WM_MOUSEMOVE <= wMsgFilterMax));
     for (;;) {
         if (s_turning && movesWanted && (s_warpPending || s_movePending)) {
             *lpMsg = MakeMouseMove(s_warpPending ? s_warp : s_virtual);
@@ -310,8 +310,9 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
             OnRawInput((HRAWINPUT)lpMsg->lParam);
         }
         // positions of the real cursor, which stays put while turning
-        bool drop = lpMsg->message == WM_MOUSEMOVE && lpMsg->hwnd == s_window
-            && (s_turning || s_releasedMidTurn && lpMsg->pt.x == s_pinned.x && lpMsg->pt.y == s_pinned.y) || !TranslatePrintScreen(lpMsg, wRemoveMsg & PM_REMOVE);
+        bool drop = (lpMsg->message == WM_MOUSEMOVE && lpMsg->hwnd == s_window
+                        && (s_turning || (s_releasedMidTurn && lpMsg->pt.x == s_pinned.x && lpMsg->pt.y == s_pinned.y)))
+            || !TranslatePrintScreen(lpMsg, wRemoveMsg & PM_REMOVE);
         if (drop) {
             if (!(wRemoveMsg & PM_REMOVE)) {
                 MSG dropped;

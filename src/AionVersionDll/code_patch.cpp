@@ -3,9 +3,10 @@
 #include "install_report.h"
 #include <stdlib.h>
 #include <string.h>
+#include <intrin.h>
 
-// The searches below go through images of up to 30 MB some sixty times while Game.dll loads, so each one looks for a single byte
-// with memchr first: the byte of the pattern least common in x64 code, or the opcode of the instruction.
+// The searches below go through images of up to 30 MB some hundred times while Game.dll loads, so each one checks 16 places at a time
+// for two bytes first: the two bytes of the pattern least common in x64 code, or those of the instruction it looks for.
 
 /// How common a byte is in x64 code, roughly: 0 for rare ones, more for the opcodes, prefixes and immediates seen everywhere.
 static int Commonness(BYTE b) {
@@ -22,33 +23,105 @@ static int Commonness(BYTE b) {
     }
 }
 
-/// Offset of the fixed byte to look for first, or length if none is fixed.
-static size_t AnchorOf(const BYTE* bytes, const char* fixed, size_t length) {
+/// The offset of the least common fixed byte, other than the one at skip; length if none is fixed.
+static size_t AnchorOf(const BYTE* bytes, const char* fixed, size_t length, size_t skip = SIZE_MAX) {
     size_t best = length;
     for (size_t i = 0; i < length; i++) {
-        if (fixed[i] && (best == length || Commonness(bytes[i]) < Commonness(bytes[best]))) {
+        if (fixed[i] && i != skip && (best == length || Commonness(bytes[i]) < Commonness(bytes[best]))) {
             best = i;
         }
     }
     return best;
 }
 
-/// Calls found(c) for every c in the module with room for length bytes and c[anchor] == value, until it returns true.
-template <typename Found>
-static void ForEachByte(HMODULE module, size_t length, size_t anchor, BYTE value, Found found) {
-    BYTE* begin = (BYTE*)module;
-    BYTE* end = begin + ModuleImageSize(module) - length + 1;
-    for (BYTE* c = begin; c < end;) {
-        BYTE* hit = (BYTE*)memchr(c + anchor, value, end - c);
-        if (!hit) {
+/// A byte the matches have at a given offset, after the mask.
+struct Anchor {
+    size_t at;
+    BYTE value;
+    BYTE mask = 0xFF;
+};
+
+/// The two least common fixed bytes of a pattern, or the one twice.
+static void AnchorsOf(const BYTE* bytes, const char* fixed, size_t length, Anchor& first, Anchor& second) {
+    size_t a = AnchorOf(bytes, fixed, length);
+    size_t b = AnchorOf(bytes, fixed, length, a);
+    b = b == length ? a : b;
+    first = { a, bytes[a] };
+    second = { b, bytes[b] };
+}
+
+/// Calls range(begin, end) for the executable sections of the module when code is searched, or once for its whole image, until it returns
+/// true. An image whose headers mark no section executable is searched whole.
+template <typename Range>
+static void ForEachRange(HMODULE module, bool code, Range range) {
+    BYTE* base = (BYTE*)module;
+    size_t imageSize = ModuleImageSize(module);
+    if (code) {
+        auto nt = (PIMAGE_NT_HEADERS)(base + ((PIMAGE_DOS_HEADER)base)->e_lfanew);
+        PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(nt);
+        bool any = false;
+        for (WORD i = 0; i < nt->FileHeader.NumberOfSections; i++, section++) {
+            size_t size = section->Misc.VirtualSize ? section->Misc.VirtualSize : section->SizeOfRawData;
+            if (!(section->Characteristics & IMAGE_SCN_MEM_EXECUTE) || section->VirtualAddress >= imageSize || !size) {
+                continue;
+            }
+            any = true;
+            if (range(base + section->VirtualAddress, base + min(imageSize, (size_t)section->VirtualAddress + size))) {
+                return;
+            }
+        }
+        if (any) {
             return;
         }
-        c = hit - anchor;
-        if (found(c)) {
-            return;
-        }
-        c++;
     }
+    range(base, base + imageSize);
+}
+
+/// Calls found(c) for every c in the searched ranges with room for length bytes that has both anchors, until it returns true. Code is
+/// searched in the executable sections only. 16 places at a time are checked for both anchors, so only the rare places with both get the
+/// full comparison. Given a target, the places must also hold the low byte of a RIP-relative displacement to it at dispAt, for an
+/// instruction of length bytes; that byte differs from place to place, and few places hold it.
+template <typename Found>
+static void ForEachMatch(HMODULE module, bool code, size_t length, Anchor first, Anchor second, Found found, const void* target = nullptr,
+    size_t dispAt = 0) {
+    ForEachRange(module, code, [&](BYTE* begin, BYTE* rangeEnd) {
+        if ((size_t)(rangeEnd - begin) < length) {
+            return false;
+        }
+        // the last place with room for the whole pattern; the loads below end within the range, as both anchors lie in the pattern
+        BYTE* end = rangeEnd - length + 1;
+        const __m128i value1 = _mm_set1_epi8((char)first.value), mask1 = _mm_set1_epi8((char)first.mask);
+        const __m128i value2 = _mm_set1_epi8((char)second.value), mask2 = _mm_set1_epi8((char)second.mask);
+        // the low byte of the displacement at place c + i is that at c minus i
+        const __m128i ramp = _mm_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+        auto lowByte = [&](const BYTE* place) { return (BYTE)((ULONG_PTR)target - (ULONG_PTR)(place + length)); };
+        BYTE* c = begin;
+        for (; c + 16 <= end; c += 16) {
+            __m128i a = _mm_and_si128(_mm_loadu_si128((const __m128i*)(c + first.at)), mask1);
+            __m128i b = _mm_and_si128(_mm_loadu_si128((const __m128i*)(c + second.at)), mask2);
+            __m128i both = _mm_and_si128(_mm_cmpeq_epi8(a, value1), _mm_cmpeq_epi8(b, value2));
+            if (target) {
+                __m128i expected = _mm_sub_epi8(_mm_set1_epi8((char)lowByte(c)), ramp);
+                both = _mm_and_si128(both, _mm_cmpeq_epi8(_mm_loadu_si128((const __m128i*)(c + dispAt)), expected));
+            }
+            unsigned bits = (unsigned)_mm_movemask_epi8(both);
+            while (bits) {
+                unsigned long i;
+                _BitScanForward(&i, bits);
+                if (found(c + i)) {
+                    return true;
+                }
+                bits &= bits - 1;
+            }
+        }
+        for (; c < end; c++) {
+            if ((c[first.at] & first.mask) == first.value && (c[second.at] & second.mask) == second.value
+                && (!target || c[dispAt] == lowByte(c)) && found(c)) {
+                return true;
+            }
+        }
+        return false;
+    });
 }
 
 static std::vector<BYTE*> MatchPattern(HMODULE module, const char* pattern) {
@@ -68,11 +141,12 @@ static std::vector<BYTE*> MatchPattern(HMODULE module, const char* pattern) {
     }
     size_t length = bytes.size();
     std::vector<BYTE*> found;
-    size_t anchor = AnchorOf(bytes.data(), fixed.data(), length);
-    if (anchor == length) {
+    if (AnchorOf(bytes.data(), fixed.data(), length) == length) {
         return found;
     }
-    ForEachByte(module, length, anchor, bytes[anchor], [&](BYTE* c) {
+    Anchor first, second;
+    AnchorsOf(bytes.data(), fixed.data(), length, first, second);
+    ForEachMatch(module, true, length, first, second, [&](BYTE* c) {
         size_t i = 0;
         while (i < length && (!fixed[i] || c[i] == bytes[i])) {
             i++;
@@ -109,9 +183,10 @@ bool InModule(HMODULE module, const void* address, size_t size) {
 
 BYTE* FindBytes(HMODULE module, const void* bytes, size_t length) {
     std::vector<char> fixed(length, 1);
-    size_t anchor = AnchorOf((const BYTE*)bytes, fixed.data(), length);
+    Anchor first, second;
+    AnchorsOf((const BYTE*)bytes, fixed.data(), length, first, second);
     BYTE* result = nullptr;
-    ForEachByte(module, length, anchor, ((const BYTE*)bytes)[anchor], [&](BYTE* c) {
+    ForEachMatch(module, false, length, first, second, [&](BYTE* c) {
         if (memcmp(c, bytes, length) == 0) {
             result = c;
         }
@@ -132,60 +207,67 @@ BYTE* FindRipReference(HMODULE module, const char* opcode, int length, const voi
         }
     }
     BYTE* result = nullptr;
-    ForEachByte(module, length, codeLength - 1, code[codeLength - 1], [&](BYTE* c) {
+    Anchor last = { (size_t)codeLength - 1, code[codeLength - 1] };
+    Anchor before = codeLength > 1 ? Anchor{ (size_t)codeLength - 2, code[codeLength - 2] } : last;
+    ForEachMatch(module, true, length, last, before, [&](BYTE* c) {
         if (memcmp(c, code, codeLength) == 0 && ResolveRip(c + length - 4, c + length) == target) {
             result = c;
         }
         return result != nullptr;
-    });
+    }, target, length - 4);
     ReportSearch(result ? 1 : 0);
     return result;
 }
 
+// lea reg, [rip+disp32] and call rel32
+static const Anchor LEA = { 1, 0x8D };
+static const Anchor RIP_OPERAND = { 2, 0x05, 0xC7 };
+static const Anchor CALL = { 0, 0xE8 };
+
 BYTE* FindLeaTo(HMODULE module, const void* target) {
     BYTE* result = nullptr;
-    ForEachByte(module, 7, 1, 0x8D, [&](BYTE* c) {
+    ForEachMatch(module, true, 7, LEA, RIP_OPERAND, [&](BYTE* c) {
         if ((c[0] == 0x48 || c[0] == 0x4C) && (c[2] & 0xC7) == 0x05 && ResolveRip(c + 3, c + 7) == target) {
             result = c;
         }
         return result != nullptr;
-    });
+    }, target, 3);
     ReportSearch(result ? 1 : 0);
     return result;
 }
 
 std::vector<BYTE*> FindAllLeasTo(HMODULE module, const void* target) {
     std::vector<BYTE*> found;
-    ForEachByte(module, 7, 1, 0x8D, [&](BYTE* c) {
+    ForEachMatch(module, true, 7, LEA, RIP_OPERAND, [&](BYTE* c) {
         if ((c[0] == 0x48 || c[0] == 0x4C) && (c[2] & 0xC7) == 0x05 && ResolveRip(c + 3, c + 7) == target) {
             found.push_back(c);
         }
         return false;
-    });
+    }, target, 3);
     ReportSearch(found.empty() ? 0 : 1);
     return found;
 }
 
 BYTE* FindCallTo(HMODULE module, const void* target) {
     BYTE* result = nullptr;
-    ForEachByte(module, 5, 0, 0xE8, [&](BYTE* c) {
+    ForEachMatch(module, true, 5, CALL, CALL, [&](BYTE* c) {
         if (ResolveRip(c + 1, c + 5) == target) {
             result = c;
         }
         return result != nullptr;
-    });
+    }, target, 1);
     ReportSearch(result ? 1 : 0);
     return result;
 }
 
 std::vector<BYTE*> FindAllCallsTo(HMODULE module, const void* target) {
     std::vector<BYTE*> found;
-    ForEachByte(module, 5, 0, 0xE8, [&](BYTE* c) {
+    ForEachMatch(module, true, 5, CALL, CALL, [&](BYTE* c) {
         if (ResolveRip(c + 1, c + 5) == target) {
             found.push_back(c);
         }
         return false;
-    });
+    }, target, 1);
     ReportSearch(found.empty() ? 0 : 1);
     return found;
 }

@@ -37,6 +37,7 @@ struct ReportPlaces {
     CodePatch windowLimit;     // the immediate of cmp edx, 150
     CodePatch distanceOperand; // the displacement of comiss xmm3, [1.0]
     CodePatch turnOperand;     // the displacement of movss xmm0, [0.866]
+    bool client5 = false;      // not found in a 5.x client, which the mod is not made for yet
 };
 
 /// The client reports the movement of the player's character from its per-frame update. Between reports the server carries
@@ -60,6 +61,8 @@ ReportPlaces LocateReports(HMODULE game) {
         places.windowLimit = ExpectBytes(window + 8, sizeof(DWORD));
         places.distanceOperand = ExpectBytes(distance + 23, sizeof(INT32));
         places.turnOperand = ExpectBytes(turn + 4, sizeof(INT32));
+    } else {
+        places.client5 = IsClient5x(game);
     }
     return places;
 }
@@ -68,6 +71,11 @@ ReportPlaces LocateReports(HMODULE game) {
 /// running speed: at 8.6 m/s, 1 m and 150 ms give one report per 0.23 s and let the reported path stray up to 1 m from the
 /// real one; 0.5 m and 50 ms give one per 0.06 s.
 void ApplyReports(const ReportPlaces& places) {
+    if (!places.windowLimit && places.client5) {
+        ModsLog("move reports: made for 4.x, not for 5.x clients yet");
+        ReportStatus(InstallStatus::Unsupported);
+        return;
+    }
     if (!places.windowLimit) {
         ModsLog("move reports: not found (window %p, distance %p, turn %p)", places.window, places.distance, places.turn);
         return;
@@ -119,6 +127,8 @@ struct SnapPlaces {
     std::vector<BYTE*> moveReturns;
     // the jumps that keep the height in the air, to become nops
     std::vector<CodePatch> heightJumps;
+    // not found in a 5.x client, which the mod is not made for yet
+    bool client5 = false;
 };
 
 /// The client carries another character towards where its last move packet sends it and only puts it at the position a new packet
@@ -135,6 +145,7 @@ SnapPlaces LocateSnap(HMODULE game) {
     places.snap = body ? FunctionStart(body) : nullptr;
     places.inAirChecks = inAir.size();
     if (!places.snap || inAir.size() != 3) {
+        places.client5 = IsClient5x(game);
         return places;
     }
     BYTE* handler = FunctionStart(inAir[0]);
@@ -161,6 +172,11 @@ SnapPlaces LocateSnap(HMODULE game) {
 /// SnapTime replaces the half second; HeightInAir corrects the height in the air too.
 void ApplySnap(const SnapPlaces& places) {
     real_SnapToServerPos = (SnapToServerPos_t)places.snap;
+    if ((!places.snap || places.inAirChecks != 3) && places.client5) {
+        ModsLog("others snap: made for 4.x, not for 5.x clients yet");
+        ReportStatus(InstallStatus::Unsupported);
+        return;
+    }
     if (!places.snap || places.inAirChecks != 3) {
         ModsLog("others snap: not found (snap %p, %zu in-air checks)", places.snap, places.inAirChecks);
         return;

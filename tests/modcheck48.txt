@@ -18,9 +18,10 @@
         chat_log_fix         applied            kernel32.dll+D5E4            writes 0/0, hooks 2/2, searches 0, misses 0, ambiguous 0
         light_rect_fix       applied            XRenderD3D9.dll+21BE0        writes 0/0, hooks 2/2, searches 1, misses 0, ambiguous 0
         glyph_cells          not_applicable     -                            writes 0/0, hooks 0/0, searches 1, misses 1, ambiguous 0
-        fast_start           applied            kernelbase.dll+23D40         writes 1/1, hooks 16/16, searches 21, misses 1, ambiguous 0
+        fast_start           applied            kernelbase.dll+23D40         writes 1/1, hooks 16/16, searches 23, misses 3, ambiguous 0
         mimalloc             applied            CrySystem.dll+76530          writes 2/2, hooks 10/10, searches 5, misses 0, ambiguous 0
         plain_system_cfg     applied            CrySystem.dll+515A0          writes 0/0, hooks 2/2, searches 4, misses 0, ambiguous 0
+        graphics_options     applied            CrySystem.dll+2D192          writes 2/2, hooks 0/0, searches 0, misses 0, ambiguous 0
         color_tag_fix        not_applicable     -                            writes 0/0, hooks 0/0, searches 3, misses 0, ambiguous 0
         server_check_fix     applied            Game.dll+2CB692              writes 1/1, hooks 0/0, searches 1, misses 0, ambiguous 0
         pet_decoration_fix   applied            Game.dll+2C74B9              writes 1/1, hooks 0/0, searches 1, misses 0, ambiguous 0

@@ -18,9 +18,10 @@
         chat_log_fix         applied            kernel32.dll+D5E4            writes 0/0, hooks 2/2, searches 0, misses 0, ambiguous 0
         light_rect_fix       applied            XRenderD3D9.dll+581D0        writes 0/0, hooks 2/2, searches 1, misses 0, ambiguous 0
         glyph_cells          applied            CryFont.dll+578FA            writes 1/1, hooks 0/0, searches 1, misses 0, ambiguous 0
-        fast_start           applied            kernelbase.dll+23D40         writes 1/1, hooks 16/16, searches 22, misses 2, ambiguous 0
+        fast_start           applied            kernelbase.dll+23D40         writes 7/7, hooks 16/16, searches 24, misses 2, ambiguous 0
         mimalloc             applied            CrySystem.dll+6C7C0          writes 1/1, hooks 10/10, searches 7, misses 2, ambiguous 0
         plain_system_cfg     applied            CrySystem.dll+47390          writes 0/0, hooks 2/2, searches 4, misses 0, ambiguous 0
+        graphics_options     applied            CrySystem.dll+30C55          writes 2/2, hooks 0/0, searches 0, misses 0, ambiguous 0
         color_tag_fix        not_applicable     -                            writes 0/0, hooks 0/0, searches 3, misses 0, ambiguous 0
         server_check_fix     applied            Game.dll+7BB124              writes 1/1, hooks 0/0, searches 1, misses 0, ambiguous 0
         pet_decoration_fix   not_applicable     -                            writes 0/0, hooks 0/0, searches 3, misses 2, ambiguous 0
@@ -33,8 +34,8 @@
         buff_limit           applied            -                            writes 0/0, hooks 0/0, searches 0, misses 0, ambiguous 0
         stat_precision       applied            Game.dll+3D7064              writes 10/10, hooks 2/2, searches 5, misses 0, ambiguous 0
         quest_targets        not_applicable     -                            writes 0/0, hooks 0/0, searches 2, misses 1, ambiguous 0
-        move_reports         not_found          -                            writes 0/0, hooks 0/0, searches 3, misses 3, ambiguous 0
-        others_snap          not_found          -                            writes 0/0, hooks 0/0, searches 2, misses 2, ambiguous 0
+        move_reports         unsupported        -                            writes 0/0, hooks 0/0, searches 4, misses 3, ambiguous 0
+        others_snap          unsupported        -                            writes 0/0, hooks 0/0, searches 3, misses 2, ambiguous 0
         ui_scale             applied            Game.dll+8D55D0              writes 7/7, hooks 0/0, searches 5, misses 0, ambiguous 0
         multi_client         applied            Game.dll+53BBC0              writes 1/1, hooks 0/0, searches 2, misses 0, ambiguous 0
         skip_agreement       applied            Game.dll+5577C1              writes 1/1, hooks 0/0, searches 2, misses 1, ambiguous 0

@@ -27,7 +27,7 @@ static HMODULE MapDump(const std::wstring& path, ULONG_PTR base) {
         return nullptr;
     }
     DWORD size = GetFileSize(file, nullptr);
-    BYTE* image = (BYTE*)VirtualAlloc((void*)base, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    BYTE* image = (BYTE*)VirtualAlloc((void*)base, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
     DWORD read = 0;
     bool ok = image == (BYTE*)base && ReadFile(file, image, size, &read, nullptr) && read == size;
     CloseHandle(file);
@@ -51,6 +51,17 @@ int wmain(int argc, wchar_t** argv) {
     }
     std::wstring folder = argv[1];
     g_dryRun = true;
+    // aion.bin first, which the fixes of the process start search
+    WIN32_FIND_DATAW client;
+    HANDLE clientSearch = FindFirstFileW((folder + L"\\aion.bin@*.dump").c_str(), &client);
+    if (clientSearch != INVALID_HANDLE_VALUE) {
+        FindClose(clientSearch);
+        HMODULE module = MapDump(folder + L"\\" + client.cFileName, (ULONG_PTR)wcstoull(wcschr(client.cFileName, L'@') + 1, nullptr, 16));
+        if (module) {
+            NameImage(L"aion.bin", module, ModuleImageSize(module));
+            SetClientModule(module);
+        }
+    }
     InstallPatch(GetModuleHandleW(nullptr));
     int mapped = 0;
     for (const wchar_t* name : MODULES) {

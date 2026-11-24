@@ -104,6 +104,7 @@ static int Weight(InstallStatus status) {
         case InstallStatus::Disabled: return 6;
         case InstallStatus::Ambiguous: return 5;
         case InstallStatus::NotFound: return 4;
+        case InstallStatus::Unsupported: return 4;
         case InstallStatus::Applied: return 3;
         case InstallStatus::NotApplicable: return 2;
         case InstallStatus::Unchanged: return 1;
@@ -150,6 +151,7 @@ static const char* NameOf(InstallStatus status) {
         case InstallStatus::SkippedDependency: return "skipped_dependency";
         case InstallStatus::Unchanged: return "unchanged";
         case InstallStatus::Waiting: return "waiting";
+        case InstallStatus::Unsupported: return "unsupported";
         default: return "none";
     }
 }
@@ -162,6 +164,16 @@ struct NamedImage {
 };
 static NamedImage s_images[8];
 static int s_imageCount = 0;
+
+static HMODULE s_clientModule = nullptr;
+
+HMODULE ClientModule() {
+    return s_clientModule ? s_clientModule : GetModuleHandleW(nullptr);
+}
+
+void SetClientModule(HMODULE module) {
+    s_clientModule = module;
+}
 
 void NameImage(const wchar_t* name, HMODULE base, size_t size) {
     if (s_imageCount < (int)(sizeof(s_images) / sizeof(s_images[0]))) {
@@ -311,8 +323,8 @@ static double UptimeSeconds() {
         return 0;
     }
     GetSystemTimePreciseAsFileTime(&now);
-    ULARGE_INTEGER a = { created.dwLowDateTime, created.dwHighDateTime };
-    ULARGE_INTEGER b = { now.dwLowDateTime, now.dwHighDateTime };
+    ULARGE_INTEGER a = { { created.dwLowDateTime, created.dwHighDateTime } };
+    ULARGE_INTEGER b = { { now.dwLowDateTime, now.dwHighDateTime } };
     return (b.QuadPart - a.QuadPart) / 1e7;
 }
 
