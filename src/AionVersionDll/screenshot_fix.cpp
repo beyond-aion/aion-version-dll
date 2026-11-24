@@ -5,6 +5,7 @@
 #include <wincodec.h>
 #include <io.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <set>
 #include <string>
 #include <vector>
@@ -135,11 +136,16 @@ static bool CopyToClipboard(const ScreenshotJob& job) {
         }
     }
     GlobalUnlock(memory);
+    // a clipboard opened without a window has no owner after EmptyClipboard, and SetClipboardData may then fail: a message-only window
+    // of this thread owns it, and the data stays on the clipboard when the window goes
     bool copied = false;
-    if (OpenClipboard(nullptr)) {
-        EmptyClipboard();
-        copied = SetClipboardData(CF_DIB, memory) != nullptr;
+    HWND owner = CreateWindowExW(0, L"STATIC", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
+    if (owner && OpenClipboard(owner)) {
+        copied = EmptyClipboard() && SetClipboardData(CF_DIB, memory) != nullptr;
         CloseClipboard();
+    }
+    if (owner) {
+        DestroyWindow(owner);
     }
     if (!copied) {
         GlobalFree(memory);
@@ -192,12 +198,35 @@ static bool WriteJpeg(const ScreenshotJob& job, const std::string& temporary) {
     return ok;
 }
 
+/// Renames the finished file to its name, never over another file: a second client in the same folder lists it on its own and can take the
+/// same number. Then the file takes the next free one, and file says which.
+static bool Publish(const std::string& temporary, std::string& file) {
+    if (MoveFileExA(temporary.c_str(), file.c_str(), 0)) {
+        return true;
+    }
+    size_t digits = file.size() - 8;  // ...Aion0042.jpg
+    int number = atoi(file.c_str() + digits);
+    for (int next = number + 1; next < 10000 && GetLastError() == ERROR_ALREADY_EXISTS; next++) {
+        char name[8];
+        sprintf_s(name, "%04d", next);
+        std::string other = file.substr(0, digits) + name + ".jpg";
+        if (MoveFileExA(temporary.c_str(), other.c_str(), 0)) {
+            ModsLog("screenshot: %s was taken by another client, written as %s", file.c_str(), other.c_str());
+            file = other;
+            return true;
+        }
+    }
+    return false;
+}
+
 static DWORD WINAPI WriteScreenshot(LPVOID parameter) {
     ScreenshotJob* job = (ScreenshotJob*)parameter;
     LONGLONG started = Now();
     HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    std::string temporary = job->file + ".part";
-    bool ok = WriteJpeg(*job, temporary) && MoveFileExA(temporary.c_str(), job->file.c_str(), MOVEFILE_REPLACE_EXISTING);
+    char suffix[24];
+    sprintf_s(suffix, ".%lu.part", GetCurrentProcessId());
+    std::string temporary = job->file + suffix;
+    bool ok = WriteJpeg(*job, temporary) && Publish(temporary, job->file);
     if (!ok) {
         DeleteFileA(temporary.c_str());
     }
@@ -302,7 +331,7 @@ void ApplyScreenshot(BYTE* const& function) {
     DetourUpdateThread(GetCurrentThread());
     AttachHook(&(PVOID&)real_Screenshot, zzScreenshot);
     AttachHook(&(PVOID&)real_SaveSurface, zzSaveSurface);
-    DetourTransactionCommit();
+    CommitHooks();
 }
 
 void InstallOnRenderer(HMODULE xrender) {
