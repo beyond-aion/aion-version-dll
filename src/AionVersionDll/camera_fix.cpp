@@ -42,6 +42,10 @@ static POINT s_pinned;
 // SM_CXDRAG or SM_CYDRAG pixels from where it was pressed, as Windows does before a drag, and the button goes up where it went down.
 static bool s_deadZone;
 static POINT s_pressedAt;
+// Alt+Tab in the middle of a turn: the button is still held, so the client turns on by the real cursor, puts it to the centre of the screen
+// in the other program and turns by every move there. Until its window is in front again, the client keeps the cursor where it put it last
+// and sees no move, and the cursor of the other program stays where it is.
+static bool s_turnLeft;
 
 /// Pointer speed multipliers of the mouse settings, by the speed 1..20, so that the camera turns as fast as it did with cursor moves.
 static const double POINTER_SPEEDS[] = { 1 / 32.0, 1 / 16.0, 1 / 8.0, 2 / 8.0, 3 / 8.0, 4 / 8.0, 5 / 8.0, 6 / 8.0, 7 / 8.0, 1, 1.25, 1.5, 1.75, 2,
@@ -187,7 +191,19 @@ static MSG MakeMouseMove(POINT at) {
     return msg;
 }
 
+/// Whether the client lost its window in the middle of a turn and is still behind another one.
+static bool TurnLeft() {
+    if (s_turnLeft && GetForegroundWindow() == s_window) {
+        s_turnLeft = false;
+    }
+    return s_turnLeft;
+}
+
 static BOOL WINAPI zzSetCursorPos(_In_ int X, _In_ int Y) {
+    if (TurnLeft() && FromGame(_ReturnAddress())) {
+        s_warp = { X, Y };
+        return TRUE;
+    }
     if (s_rawInput && OnWindowThread() && FromGame(_ReturnAddress())) {
         if (!s_turning && AnyButtonHeld() && (GetCapture() == s_window || (s_releasedMidTurn && X == s_warp.x && Y == s_warp.y))) {
             StartTurning(X, Y);
@@ -214,13 +230,19 @@ static BOOL WINAPI zzGetCursorPos(_Out_ LPPOINT lpPoint) {
         *lpPoint = s_pressedAt;
         return TRUE;
     }
+    if (TurnLeft()) {
+        *lpPoint = s_warp;
+        return TRUE;
+    }
     return real_GetCursorPos(lpPoint);
 }
 
 static BOOL WINAPI zzReleaseCapture() {
     if (s_turning && FromGame(_ReturnAddress())) {
         StopTurning();
-        if (AnyButtonHeld()) {
+        if (GetForegroundWindow() != s_window) {
+            s_turnLeft = true;
+        } else if (AnyButtonHeld()) {
             real_SetCursorPos(s_warp.x, s_warp.y);
             s_releasedMidTurn = true;
         }
@@ -331,6 +353,7 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
         UpdatePrintScreenHotKey(s_window, foreground);
     }
     if (s_turning && OnWindowThread() && (!AnyButtonHeld() || GetForegroundWindow() != s_window)) {
+        s_turnLeft = GetForegroundWindow() != s_window;
         StopTurning();
     }
     if (s_releasedMidTurn && OnWindowThread() && !AnyButtonHeld()) {
@@ -365,7 +388,7 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
         }
         // positions of the real cursor, which stays put while turning
         bool drop = (lpMsg->message == WM_MOUSEMOVE && lpMsg->hwnd == s_window
-                        && (s_turning || (s_releasedMidTurn && lpMsg->pt.x == s_pinned.x && lpMsg->pt.y == s_pinned.y) || StaysInDeadZone(lpMsg->pt)))
+                        && (s_turning || TurnLeft() || (s_releasedMidTurn && lpMsg->pt.x == s_pinned.x && lpMsg->pt.y == s_pinned.y) || StaysInDeadZone(lpMsg->pt)))
             || !TranslatePrintScreen(lpMsg, wRemoveMsg & PM_REMOVE);
         if (drop) {
             if (!(wRemoveMsg & PM_REMOVE)) {
