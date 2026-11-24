@@ -66,6 +66,7 @@ void InstallColorTagFix(HMODULE game);
 void InstallServerCheckFix(HMODULE game);
 void InstallPetDecorationFix(HMODULE game);
 void InstallLightRectFixOnLoad();
+void InstallScreenshotFix();
 
 /// The fixes of Game.dll in the order they install, once its entry point has run.
 static const InstallEntry GAME_FIXES[] = {
@@ -129,6 +130,7 @@ static const InstallEntry PROCESS_FIXES[] = {
     { "crash_log", nullptr, [](HMODULE) { InstallCrashLog(); } },
     { "reserve_fix", nullptr, [](HMODULE) { InstallReserveFix(); } },
     { "light_rect_fix", nullptr, [](HMODULE) { InstallLightRectFixOnLoad(); } },
+    { "screenshot_fix", nullptr, [](HMODULE) { InstallScreenshotFix(); } },
 };
 
 /// version.log opens first, so that every fix and mod below can log. Of the handlers for the same DLL and phase (module_load.h), the

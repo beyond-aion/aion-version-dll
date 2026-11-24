@@ -164,6 +164,7 @@
     <ClCompile Include="mod_ping.cpp" />
     <ClCompile Include="reserve_fix.cpp" />
     <ClCompile Include="server_check_fix.cpp" />
+    <ClCompile Include="screenshot_fix.cpp" />
     <ClCompile Include="shader_fix.cpp" />
     <ClCompile Include="stack_fix_x64.cpp" />
     <ClCompile Include="version.cpp" />

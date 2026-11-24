@@ -51,7 +51,8 @@ The DLL automatically applies fixes for the following problems:
 <details>
 <summary><b>PrintScreen</b></summary>
 
-- the `Print Screen` key no longer opens the Snipping Tool over the game's own screenshot
+- the `Print Screen` key no longer opens the Snipping Tool over the game's own screenshot, and puts that screenshot on the clipboard
+- taking a screenshot no longer freezes the game: the client used to open every screenshot taken before to find a free name, a matter of seconds on a hard disk the first time, and to encode the picture in the frame; it is now encoded and written in the background
 </details>
 
 <details>
