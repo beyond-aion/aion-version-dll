@@ -447,7 +447,14 @@ static void HookWindow(HWND window) {
 
 static HRESULT STDMETHODCALLTYPE zzPresent(IDirect3DDevice9* device, const RECT* src, const RECT* dst, HWND window, const RGNDATA* dirty) {
     DrawOverlay(device);
-    return real_Present(device, src, dst, window, dirty);
+    if (!g_frameStatSeconds) {
+        return real_Present(device, src, dst, window, dirty);
+    }
+    LARGE_INTEGER before;
+    FrameStatBeforePresent(before);
+    HRESULT result = real_Present(device, src, dst, window, dirty);
+    FrameStatAfterPresent(before);
+    return result;
 }
 
 static HRESULT STDMETHODCALLTYPE zzReset(IDirect3DDevice9* device, D3DPRESENT_PARAMETERS* params) {

@@ -156,6 +156,7 @@
     <ClCompile Include="mod_multi_client.cpp" />
     <ClCompile Include="mod_skip_agreement.cpp" />
     <ClCompile Include="pet_decoration_fix.cpp" />
+    <ClCompile Include="profiler.cpp" />
     <ClCompile Include="mod_quick_destroy.cpp" />
     <ClCompile Include="mod_fast_start.cpp" />
     <ClCompile Include="mod_mimalloc.cpp" />

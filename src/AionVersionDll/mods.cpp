@@ -135,7 +135,7 @@ static const InstallEntry PROCESS_MODS[] = {
         [](HMODULE) { OnModuleLoad(L"CryFont.dll", InstallGlyphCells, false); } },
     { "fast_start", [] { return Config().fastStart != FAST_START_OFF; }, [](HMODULE) { InstallFastStart(); } },
     { "mimalloc", [] { return Config().mimalloc; }, [](HMODULE) { InstallMimalloc(); } },
-    { "overlay", [] { return Config().pingOverlayMode != 0; }, [](HMODULE) { InstallOverlay(); } },
+    { "overlay", [] { return Config().pingOverlayMode != 0 || g_frameStatSeconds > 0; }, [](HMODULE) { InstallOverlay(); } },
     { "plain_system_cfg", [] { return Config().plainSystemCfg; }, [](HMODULE) { InstallPlainSystemCfg(); } },
 };
 

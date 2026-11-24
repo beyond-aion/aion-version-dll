@@ -145,6 +145,8 @@ void InstallPatch(HINSTANCE self) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         InstallModuleDumps();
+        void InstallProfiler();
+        InstallProfiler();
         InstallAll(PROCESS_FIXES, nullptr);
         if (g_dryRun) {
             // the client changes the limits once it creates its window, which modcheck has not; the search is checked on the image

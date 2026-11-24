@@ -45,6 +45,11 @@ constexpr int CLIENT_LARGE_GLYPH_FROM = 33;
 
 extern ModsConfig g_modsConfig;
 
+/// [Debug] FrameStat: seconds between the frame time lines in version.log, 0 = off (profiler.cpp, called from the overlay's Present).
+extern int g_frameStatSeconds;
+void FrameStatBeforePresent(LARGE_INTEGER& before);
+void FrameStatAfterPresent(const LARGE_INTEGER& before);
+
 /// The idle check, which compares the time since the last input against the idle limit (901652 = STR_MSG_AUTO_DISCONNECTED).
 BYTE* FindIdleCheck(HMODULE module);
 
