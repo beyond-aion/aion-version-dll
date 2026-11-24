@@ -38,6 +38,10 @@ static HRAWINPUT s_lastRawInput;
 // client puts it back there again.
 static bool s_releasedMidTurn;
 static POINT s_pinned;
+// A click with a hand that trembles a little stays a click: after a mouse button goes down, the client sees no move until the cursor has gone
+// SM_CXDRAG or SM_CYDRAG pixels from where it was pressed, as Windows does before a drag, and the button goes up where it went down.
+static bool s_deadZone;
+static POINT s_pressedAt;
 
 /// Pointer speed multipliers of the mouse settings, by the speed 1..20, so that the camera turns as fast as it did with cursor moves.
 static const double POINTER_SPEEDS[] = { 1 / 32.0, 1 / 16.0, 1 / 8.0, 2 / 8.0, 3 / 8.0, 4 / 8.0, 5 / 8.0, 6 / 8.0, 7 / 8.0, 1, 1.25, 1.5, 1.75, 2,
@@ -103,6 +107,7 @@ static void StartTurning(int x, int y) {
     s_clipped = ClipCursor(&pin) != FALSE;
     s_pinned = cursor;
     s_releasedMidTurn = false;
+    s_deadZone = false;
     s_turning = true;
 }
 
@@ -205,6 +210,10 @@ static BOOL WINAPI zzGetCursorPos(_Out_ LPPOINT lpPoint) {
         *lpPoint = s_virtual;
         return TRUE;
     }
+    if (s_deadZone && OnWindowThread()) {
+        *lpPoint = s_pressedAt;
+        return TRUE;
+    }
     return real_GetCursorPos(lpPoint);
 }
 
@@ -274,6 +283,45 @@ static BOOL WINAPI zzGetKeyboardState(_Out_writes_(256) PBYTE lpKeyState) {
     return result;
 }
 
+/// Whether a move of the real cursor to pt stays in the dead zone after a press; the first one out of it ends the zone.
+static bool StaysInDeadZone(POINT pt) {
+    if (!s_deadZone) {
+        return false;
+    }
+    if (abs(pt.x - s_pressedAt.x) < GetSystemMetrics(SM_CXDRAG) && abs(pt.y - s_pressedAt.y) < GetSystemMetrics(SM_CYDRAG)) {
+        return true;
+    }
+    s_deadZone = false;
+    return false;
+}
+
+/// Starts the dead zone when the left or right button goes down and puts the button back up where it went down while the zone lasts.
+static void OnButton(MSG* msg, bool removed) {
+    switch (msg->message) {
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONDBLCLK:
+        if (removed && !s_turning && !s_releasedMidTurn && !s_deadZone) {
+            s_pressedAt = msg->pt;
+            s_deadZone = true;
+        }
+        break;
+    case WM_LBUTTONUP:
+    case WM_RBUTTONUP:
+        if (s_deadZone) {
+            POINT client = s_pressedAt;
+            ScreenToClient(s_window, &client);
+            msg->lParam = MAKELPARAM(client.x, client.y);
+            msg->pt = s_pressedAt;
+            if (removed) {
+                s_deadZone = false;
+            }
+        }
+        break;
+    }
+}
+
 static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UINT wMsgFilterMin, _In_ UINT wMsgFilterMax, _In_ UINT wRemoveMsg) {
     if (OnWindowThread()) {
         bool foreground = GetForegroundWindow() == s_window;
@@ -287,6 +335,9 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
     }
     if (s_releasedMidTurn && OnWindowThread() && !AnyButtonHeld()) {
         s_releasedMidTurn = false;
+    }
+    if (s_deadZone && OnWindowThread() && (!AnyButtonHeld() || GetForegroundWindow() != s_window)) {
+        s_deadZone = false;
     }
     bool movesWanted = (!hWnd || hWnd == s_window)
         && ((wMsgFilterMin == 0 && wMsgFilterMax == 0) || (wMsgFilterMin <= WM_MOUSEMOVE && WM_MOUSEMOVE <= wMsgFilterMax));
@@ -309,9 +360,12 @@ static BOOL WINAPI zzPeekMessageA(_Out_ LPMSG lpMsg, _In_opt_ HWND hWnd, _In_ UI
         if (lpMsg->message == WM_INPUT && s_rawInput) {
             OnRawInput((HRAWINPUT)lpMsg->lParam);
         }
+        if (lpMsg->hwnd == s_window) {
+            OnButton(lpMsg, wRemoveMsg & PM_REMOVE);
+        }
         // positions of the real cursor, which stays put while turning
         bool drop = (lpMsg->message == WM_MOUSEMOVE && lpMsg->hwnd == s_window
-                        && (s_turning || (s_releasedMidTurn && lpMsg->pt.x == s_pinned.x && lpMsg->pt.y == s_pinned.y)))
+                        && (s_turning || (s_releasedMidTurn && lpMsg->pt.x == s_pinned.x && lpMsg->pt.y == s_pinned.y) || StaysInDeadZone(lpMsg->pt)))
             || !TranslatePrintScreen(lpMsg, wRemoveMsg & PM_REMOVE);
         if (drop) {
             if (!(wRemoveMsg & PM_REMOVE)) {
