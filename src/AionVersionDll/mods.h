@@ -23,12 +23,7 @@ struct ModsConfig {
     bool statPrecision;
     bool questTargets;
     bool moveReports;
-    int moveReportWindow; // milliseconds
-    float moveReportDistance; // meters
-    float moveReportTurnAngle; // degrees
     bool othersSnap;
-    float othersSnapTime; // seconds of their speed
-    bool othersHeightInAir;
     bool multiClient;
     bool skipAgreement;
     bool skipTypedConfirm;

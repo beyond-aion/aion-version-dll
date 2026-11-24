@@ -24,7 +24,7 @@ The DLL automatically applies fixes for the following problems:
 
 - the camera no longer stutters or hangs when moving it via the mouse on Windows 10 (since version 1709) and 11
 - camera movement is no longer blocked when using screen capture software such as Bandicam
-- a click with a slightly shaky hand no longer turns the camera a little: the mouse has to move a few pixels (the drag distance of Windows) with the button held before the camera starts turning
+- the camera no longer jumps, and the cursor no longer lands in the middle of the screen, after Alt+Tab with a mouse button held
 </details>
 
 <details>
@@ -78,8 +78,8 @@ Optional additions to the game client, which can be enabled via `mods.ini`:
 - **Stats:** displays attack, casting and movement speed stats in the character window with as many decimals as they have (up to three).
 - **Quest targets:** displays quest icons in front of the names of monsters that a quest step needs, as 5.x clients already do. On 4.6, gatherable objects also get the green glow later clients show.
 - **DXVK switch:** `[Graphics] DXVK=0` makes the client use the Direct3D 9 of Windows even when a DXVK `d3d9.dll` lies next to it, so the two can be compared without moving files.
-- **Move reports (`[MoveReports]`):** the game server checks skill range, area hits and line of sight along the path the client reports, and the client's reports cut corners by up to a meter or two; the mod reports the character's movement sooner when it strays from the direction it last reported, as when it runs into a wall or along a pillar, or turns, so the game server sees the path around corners and obstacles. By default (`MergeMs=50`, `DriftMeters=0.5`, `TurnDegrees=15`) that is one report per 0.06 s instead of 0.23 s there, and the reported path stays within 0.5 m of the real one instead of 1 m; running in a straight line is not affected. The client's own values are 150, 1 and 30; `Enabled=0` turns the mod off.
-- **Others' position (`[OthersPosition]`):** puts other characters at the position their move packets report once they lag a quarter of a second of their speed behind it (`SnapSeconds=0.25`; 4.x clients wait for half a second, 3-4 m running, and 5.x clients for a whole second), and corrects their height in the air too (`SnapHeightInAir=1`), so one the client let fall off a ledge comes back up. This changes only what you see, so that you aim at where the server has them. `Enabled=0` turns it off.
+- **Move reports (`[MoveReports]`):** the game server checks skill range, area hits and line of sight along the path the client reports, and the client's reports cut corners by up to a meter or two; the mod reports the character's movement sooner when it strays from the direction it last reported, as when it runs into a wall or along a pillar, or turns, so the game server sees the path around corners and obstacles. There it holds a report back 50 ms instead of 150 and reports after 0.5 m or 15 degrees instead of 1 m or 30, one report per 0.06 s instead of 0.23 s, so the reported path stays within 0.5 m of the real one; running in a straight line is not affected. The values are fixed, `Enabled=0` turns the mod off.
+- **Others' position (`[OthersPosition]`):** puts other characters at the position their move packets report once they lag a quarter of a second of their speed behind it (4.x clients wait for half a second, 3-4 m running, and 5.x clients for a whole second), and corrects their height in the air too, so one the client let fall off a ledge comes back up. This changes only what you see, so that you aim at where the server has them. The values are fixed, `Enabled=0` turns it off.
 - **Multi client:** allows running more than two clients simultaneously.
 - **Skip agreement:** skips the user agreement on login.
 - **Quick destroy:** asks the usual yes-or-no question for the items that otherwise want a word typed before them.

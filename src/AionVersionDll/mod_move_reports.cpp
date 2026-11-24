@@ -78,7 +78,12 @@ ReportPlaces LocateReports(HMODULE game) {
 
 /// Running freely the prediction stays close and nothing changes. Running into a wall or along a pillar it runs away at the
 /// running speed: at 8.6 m/s, 1 m and 150 ms give one report per 0.23 s and let the reported path stray up to 1 m from the
-/// real one; 0.5 m and 50 ms give one per 0.06 s.
+/// real one; 0.5 m and 50 ms give one per 0.06 s. The values are fixed rather than settings: they keep the path the server checks
+/// within half a meter at a packet rate the server takes, and lower ones only send more packets.
+constexpr DWORD REPORT_WINDOW_MS = 50;  // the client: 150
+constexpr float REPORT_DISTANCE = 0.5f;  // meters, the client: 1
+constexpr float REPORT_TURN_DEGREES = 15;  // the client: 30
+
 void ApplyReports(const ReportPlaces& places) {
     if (!places.windowLimit) {
         ModsLog("move reports: not found (window %p, distance %p, turn %p)", places.window, places.distance, places.turn);
@@ -89,14 +94,14 @@ void ApplyReports(const ReportPlaces& places) {
         ModsLog("move reports: no memory near Game.dll");
         return;
     }
-    values[0] = g_modsConfig.moveReportDistance * g_modsConfig.moveReportDistance;
-    values[1] = cosf(g_modsConfig.moveReportTurnAngle * 3.14159265f / 180);
-    DWORD windowMs = g_modsConfig.moveReportWindow;
+    values[0] = REPORT_DISTANCE * REPORT_DISTANCE;
+    values[1] = cosf(REPORT_TURN_DEGREES * 3.14159265f / 180);
+    DWORD windowMs = REPORT_WINDOW_MS;
     bool ok = ApplyPatch(places.windowLimit, &windowMs);
     ok &= Redirect(places.distanceOperand, &values[0]);
     ok &= Redirect(places.turnOperand, &values[1]);
     ModsLog("move reports: window at %p, distance at %p, turn at %p: %d ms, %g m, %g degrees%s", places.window, places.distance, places.turn,
-        g_modsConfig.moveReportWindow, g_modsConfig.moveReportDistance, g_modsConfig.moveReportTurnAngle, ok ? "" : ", patch failed");
+        REPORT_WINDOW_MS, REPORT_DISTANCE, REPORT_TURN_DEGREES, ok ? "" : ", patch failed");
 }
 
 } // namespace
@@ -190,7 +195,11 @@ SnapPlaces LocateSnap(HMODULE game) {
     return places;
 }
 
-/// SnapTime replaces the half second; HeightInAir corrects the height in the air too.
+/// A quarter of a second of their speed in place of the client's half second (a whole one in 5.x), and the height corrected in the air
+/// too, so that one the client let fall off a ledge comes back up. Fixed rather than settings, like the move reports: shorter ones put
+/// them back on every small difference, which shows as jitter, and longer ones bring back what the mod is for.
+constexpr float SNAP_SECONDS = 0.25f;
+
 void ApplySnap(const SnapPlaces& places) {
     real_SnapToServerPos = (SnapToServerPos_t)places.snap;
     if (!places.snap || places.inAirChecks != 3) {
@@ -199,18 +208,16 @@ void ApplySnap(const SnapPlaces& places) {
     }
     s_moveSnapReturns = places.moveReturns;
     bool ok = true;
-    if (g_modsConfig.othersHeightInAir) {
-        for (const CodePatch& jump : places.heightJumps) {
-            ok &= ApplyPatch(jump);
-        }
+    for (const CodePatch& jump : places.heightJumps) {
+        ok &= ApplyPatch(jump);
     }
     float clientTime = SnapTime(places.client5);
-    if (g_modsConfig.othersSnapTime != clientTime && s_moveSnapReturns.size() == 3) {
-        s_snapScale = g_modsConfig.othersSnapTime / clientTime;
+    if (s_moveSnapReturns.size() == 3) {
+        s_snapScale = SNAP_SECONDS / clientTime;
         AttachHook(&(PVOID&)real_SnapToServerPos, zzSnapToServerPos);
     }
-    ModsLog("others snap: snap at %p, %zu calls from the move handler, %g s (client %g s), height in the air %d (%zu jumps)%s",
-        real_SnapToServerPos, s_moveSnapReturns.size(), g_modsConfig.othersSnapTime, clientTime, g_modsConfig.othersHeightInAir, places.heightJumps.size(),
+    ModsLog("others snap: snap at %p, %zu calls from the move handler, %g s (client %g s), height in the air (%zu jumps)%s",
+        real_SnapToServerPos, s_moveSnapReturns.size(), SNAP_SECONDS, clientTime, places.heightJumps.size(),
         ok ? "" : ", patch failed");
 }
 
