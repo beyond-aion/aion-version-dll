@@ -1,0 +1,10 @@
+mimalloc provides CMake targets:
+
+  find_package(mimalloc CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE $<IF:$<TARGET_EXISTS:mimalloc-static>,mimalloc-static,mimalloc>)
+
+On Windows with dynamic linkage, call a mimalloc API function (e.g.
+`mi_version()`) to ensure the allocator DLL (`mimalloc.dll`, or
+`mimalloc-secure.dll` with the secure feature; `-debug` variants in Debug)
+is loaded. Keep the matching `mimalloc-redirect*.dll` alongside it.
+See https://github.com/microsoft/mimalloc/blob/dev3/bin/readme.md
