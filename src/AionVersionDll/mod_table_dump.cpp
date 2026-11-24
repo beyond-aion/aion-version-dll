@@ -23,6 +23,7 @@ struct DumpPlaces {
     CodePatch flag;            // the developer flag, CXGame+0x53C0 in 4.8 (4.6 +0x44B8, 4.9 +0x5488)
     void** system = nullptr;   // where the game keeps ISystem*
     std::vector<void*> methods; // the dump writers and readers (vt[3], vt[4]) of the tables that have a dump file
+    std::vector<bool> isWriter; // whether the method at the same index is a writer (vt[3]) or a reader (vt[4])
     bool hasDumps = false;      // 5.x clients have none, they keep their tables in tables.dmp by themselves
 };
 
@@ -113,6 +114,7 @@ DumpPlaces Locate(HMODULE game) {
             void* method = vtable[slot];
             if (InModule(game, method, 1) && std::find(places.methods.begin(), places.methods.end(), method) == places.methods.end()) {
                 places.methods.push_back(method);
+                places.isWriter.push_back(slot == 3);
             }
         }
         if (!places.system) {
@@ -178,11 +180,19 @@ void HookPak(bool on) {
 constexpr int MAX_METHODS = 32;
 DumpMethod_t s_real[MAX_METHODS];
 
+bool s_dumpActive = false;
+volatile bool s_writerSeen = false;
+bool s_isWriter[MAX_METHODS] = {};
+void WriterStarted();
+
 template <int N>
 __int64 __fastcall zzDumpMethod(__int64 table, const char* file) {
     HookPak(true);
     __int64 result = s_real[N](table, file);
     HookPak(false);
+    if (s_isWriter[N]) {
+        WriterStarted();
+    }
     ModsLog("table dump: %s %s", file ? file : "?", result ? "done" : "failed");
     return result;
 }
@@ -226,14 +236,85 @@ void StampPaks(const std::wstring& folder, const std::wstring& relative, unsigne
     FindClose(search);
 }
 
-/// Deletes the dumps in Data\Dump when the game data changed since they were written: the folder of the client is the parent of bin64.
-void DropStaleDumps() {
+/// The folder of the client, the parent of bin64.
+std::wstring ClientRoot() {
     wchar_t path[MAX_PATH];
     DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
     std::wstring root(path, length);
     for (int up = 0; up < 2 && root.rfind(L'\\') != std::wstring::npos; up++) {
         root.resize(root.rfind(L'\\'));
     }
+    return root;
+}
+
+/// Data\Dump\TableDump.ini, where the client marks whether the dumps on disk are complete (NormalStop).
+const std::wstring& TablesIniPath() {
+    static std::wstring path = ClientRoot() + L"\\Data\\Dump\\TableDump.ini";
+    return path;
+}
+
+bool ReadNormalStop() {
+    HANDLE file = CreateFileW(TablesIniPath().c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    char text[512] = {};
+    DWORD read = 0;
+    ReadFile(file, text, sizeof(text) - 1, &read, nullptr);
+    CloseHandle(file);
+    const char* key = strstr(text, "NormalStop");
+    if (!key) {
+        return false;
+    }
+    key += strlen("NormalStop");
+    while (*key == ' ' || *key == '\t') {
+        key++;
+    }
+    if (*key != '=') {
+        return false;
+    }
+    key++;
+    while (*key == ' ' || *key == '\t') {
+        key++;
+    }
+    return _strnicmp(key, "true", 4) == 0 || *key == '1';
+}
+
+void WriteNormalStop(bool value) {
+    WritePrivateProfileStringW(L"Game", L"NormalStop", value ? L"true" : L"false", TablesIniPath().c_str());
+    // passing a null section flushes the cache of the profile API to the file
+    WritePrivateProfileStringW(nullptr, nullptr, nullptr, TablesIniPath().c_str());
+}
+
+/// A dump writer runs only for a dump that was missing or rejected, so the flag has to stay false until the loop is over.
+void WriterStarted() {
+    s_writerSeen = true;
+    if (s_dumpActive) {
+        WriteNormalStop(false);
+    }
+}
+
+/// The client writes NormalStop=false when it starts and true only on a normal exit, so a client killed early makes the next start
+/// rebuild the dumps even though they were complete. Once the dumps of the last run are known to be complete, put the flag back
+/// right after the client clears it; a writer, should one run after all, takes the flag down again until the loop is over.
+DWORD WINAPI NormalStopWatch(LPVOID) {
+    for (int i = 0; i < 300; i++) {
+        if (s_writerSeen) {
+            return 0;
+        }
+        if (!ReadNormalStop()) {
+            WriteNormalStop(true);
+            ModsLog("table dump: put NormalStop back after the client started, the dumps were complete");
+            return 0;
+        }
+        Sleep(50);
+    }
+    return 0;
+}
+
+/// Deletes the dumps in Data\Dump when the game data changed since they were written. Returns the number of deleted dumps.
+int DropStaleDumps() {
+    std::wstring root = ClientRoot();
     unsigned long long hash = 0xCBF29CE484222325ull;
     int count = 0;
     StampPaks(root + L"\\Data", L"Data\\", hash, count);
@@ -250,7 +331,7 @@ void DropStaleDumps() {
         CloseHandle(file);
     }
     if (strcmp(old, stamp) == 0) {
-        return;
+        return 0;
     }
     int deleted = 0;
     WIN32_FIND_DATAW found;
@@ -270,6 +351,7 @@ void DropStaleDumps() {
     }
     ModsLog("table dump: %d .pak files changed since the dumps were written (stamp %s, was %s), %d dumps deleted", count, stamp, old[0] ? old : "none",
         deleted);
+    return deleted;
 }
 
 void Apply(const DumpPlaces& places) {
@@ -283,21 +365,43 @@ void Apply(const DumpPlaces& places) {
         ReportStatus(InstallStatus::NotFound);
         return;
     }
+    bool trusted = false;
     if (!g_dryRun) {
-        DropStaleDumps();
+        // read the flag before the client's own start writes it: true here means the dumps of the last run are complete
+        trusted = ReadNormalStop();
+        int deleted = DropStaleDumps();
+        trusted = trusted && deleted == 0;
+        s_dumpActive = true;
     }
     static const auto HOOKS = MakeHooks(std::make_integer_sequence<int, MAX_METHODS>());
     s_system = places.system;
     size_t count = min(places.methods.size(), (size_t)MAX_METHODS);
     for (size_t i = 0; i < count; i++) {
         s_real[i] = (DumpMethod_t)places.methods[i];
+        s_isWriter[i] = i < places.isWriter.size() && places.isWriter[i];
         AttachHook(&(PVOID&)s_real[i], HOOKS[i]);
     }
     bool ok = ApplyPatch(places.flag);
     ModsLog("table dump: flag at %p, ISystem at %p, %zu dump methods%s", places.flag.at, places.system, count, ok ? "" : ", flag not set");
+    if (s_dumpActive && trusted) {
+        CreateThread(nullptr, 0, NormalStopWatch, nullptr, 0, nullptr);
+        ModsLog("table dump: the dumps were complete, keeping NormalStop true after the client's start");
+    }
 }
 
 } // namespace
+
+/// The table loop is over (the client is at its login screen): the dumps on disk are complete, so a later early exit or crash must not
+/// make the next start rebuild them.
+void MarkDumpsComplete() {
+    if (!s_dumpActive) {
+        return;
+    }
+    if (!ReadNormalStop()) {
+        WriteNormalStop(true);
+        ModsLog("table dump: the table loop is over, NormalStop=true");
+    }
+}
 
 void InstallTableDump(HMODULE game) {
     LocateThenApply(game, Locate, Apply);
