@@ -22,6 +22,11 @@ struct ModsConfig {
     int ownBuffColumns;
     bool statPrecision;
     bool questTargets;
+    int moveReportWindow; // milliseconds
+    float moveReportDistance; // meters
+    float moveReportTurnAngle; // degrees
+    float othersSnapTime; // seconds of their speed
+    bool othersHeightInAir;
     bool multiClient;
     bool skipAgreement;
     bool skipTypedConfirm;
@@ -73,6 +78,8 @@ struct XmlNode {
 void AddUiXmlEdit(const wchar_t* dialogName, void (*apply)(XmlNode& dialog));
 void InstallStatPrecision(HMODULE game);
 void InstallQuestTargets(HMODULE game);
+void InstallMoveReports(HMODULE game);
+void InstallOthersSnap(HMODULE game);
 void InstallUiScale(HMODULE game);
 void InstallMultiClient(HMODULE game);
 void InstallSkipAgreement(HMODULE game);

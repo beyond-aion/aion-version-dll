@@ -47,6 +47,11 @@ static const Setting SETTINGS[] = {
     { L"Buffs", L"OwnColumns", Setting::Int, &g_modsConfig.ownBuffColumns, 0, 0, 64 },
     { L"Stats", L"Enabled", Setting::Bool, &g_modsConfig.statPrecision, 0 },
     { L"QuestTargets", L"Enabled", Setting::Bool, &g_modsConfig.questTargets, 0 },
+    { L"MoveReports", L"Window", Setting::Int, &g_modsConfig.moveReportWindow, 50, 0, 150 },
+    { L"MoveReports", L"Distance", Setting::Float, &g_modsConfig.moveReportDistance, 0.5f, 0.1f, 1 },
+    { L"MoveReports", L"TurnAngle", Setting::Float, &g_modsConfig.moveReportTurnAngle, 15, 1, 30 },
+    { L"MoveReports", L"OthersSnapTime", Setting::Float, &g_modsConfig.othersSnapTime, 0.25f, 0.1f, 0.5f },
+    { L"MoveReports", L"OthersHeightInAir", Setting::Bool, &g_modsConfig.othersHeightInAir, 1 },
     { L"MultiClient", L"Enabled", Setting::Bool, &g_modsConfig.multiClient, 0 },
     { L"Login", L"SkipAgreement", Setting::Bool, &g_modsConfig.skipAgreement, 0 },
     { L"Destroy", L"SkipTypedConfirm", Setting::Bool, &g_modsConfig.skipTypedConfirm, 0 },
@@ -103,6 +108,12 @@ static void InstallGameMods(HMODULE game) {
     }
     if (g_modsConfig.questTargets) {
         InstallQuestTargets(game);
+    }
+    if (g_modsConfig.moveReportWindow != 150 || g_modsConfig.moveReportDistance != 1 || g_modsConfig.moveReportTurnAngle != 30) {
+        InstallMoveReports(game);
+    }
+    if (g_modsConfig.othersSnapTime != 0.5f || g_modsConfig.othersHeightInAir) {
+        InstallOthersSnap(game);
     }
     if (g_modsConfig.uiScaleFit) {
         InstallUiScale(game);
