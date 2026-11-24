@@ -198,7 +198,7 @@ void Apply(const Place& place, HMODULE crySystem, bool beforeEntry) {
     AttachHook(&(PVOID&)real_PoolFree, zzPoolFree);
     AttachHook(&(PVOID&)real_ThreadAlloc, zzThreadAlloc);
     AttachHook(&(PVOID&)real_ThreadFree, zzThreadFree);
-    LONG error = DetourTransactionCommit();
+    LONG error = CommitHooks();
     // the pool's heap starts small from now on; hooked too late for that, what it has not used of the heap goes back
     int heaps = 0;
     if (error == NO_ERROR) {

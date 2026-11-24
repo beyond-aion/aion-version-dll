@@ -32,6 +32,9 @@ static SRWLOCK s_lock = SRWLOCK_INIT;
 static thread_local int t_current = -1;
 static bool s_finalSummaryDone = false;
 static thread_local bool t_locating = false;
+// the entries whose hooks AttachHook counted in the open Detours transaction of this thread, one per hook, taken back if the commit fails
+static thread_local int t_pendingHooks[64];
+static thread_local int t_pendingCount = 0;
 
 LocatePhase::LocatePhase() : m_outer(t_locating) {
     t_locating = true;
@@ -307,6 +310,9 @@ LONG AttachHook(PVOID* real, PVOID hook) {
     UpdateCurrent([&](Entry& e) {
         if (error == NO_ERROR && !misplaced) {
             e.hooks++;
+            if (t_pendingCount < (int)(sizeof(t_pendingHooks) / sizeof(t_pendingHooks[0]))) {
+                t_pendingHooks[t_pendingCount++] = t_current;
+            }
             if (!e.firstChange) {
                 e.firstChange = target;
             }
@@ -317,12 +323,28 @@ LONG AttachHook(PVOID* real, PVOID hook) {
     return error;
 }
 
+LONG CommitHooks() {
+    LONG error = DetourTransactionCommit();
+    if (error != NO_ERROR) {
+        AcquireSRWLockExclusive(&s_lock);
+        for (int i = 0; i < t_pendingCount; i++) {
+            Entry& e = s_entries[t_pendingHooks[i]];
+            e.hooks--;
+            e.failedHooks++;
+            e.dirty = true;
+        }
+        ReleaseSRWLockExclusive(&s_lock);
+    }
+    t_pendingCount = 0;
+    return error;
+}
+
 static double UptimeSeconds() {
     FILETIME created, exited, kernel, user, now;
     if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) {
         return 0;
     }
-    GetSystemTimePreciseAsFileTime(&now);
+    GetSystemTimeAsFileTime(&now);  // the precise one is Windows 8+, and an import the loader of Windows 7 refuses
     ULARGE_INTEGER a = { { created.dwLowDateTime, created.dwHighDateTime } };
     ULARGE_INTEGER b = { { now.dwLowDateTime, now.dwHighDateTime } };
     return (b.QuadPart - a.QuadPart) / 1e7;

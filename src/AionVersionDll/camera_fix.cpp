@@ -400,7 +400,7 @@ void InstallOrUpdateCameraFix(HWND hWnd) {
         AttachHook(&(PVOID&)real_ReleaseCapture, zzReleaseCapture);
         AttachHook(&(PVOID&)real_GetAsyncKeyState, zzGetAsyncKeyState);
         AttachHook(&(PVOID&)real_GetKeyboardState, zzGetKeyboardState);
-        LONG error = DetourTransactionCommit();
+        LONG error = CommitHooks();
         MODULE_LOG("camera fix: hooks %s (%ld)", error ? "failed" : "installed", error);
     }
     if (hWnd == s_window || !IsClientWindow(hWnd)) {

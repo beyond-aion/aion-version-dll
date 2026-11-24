@@ -533,7 +533,7 @@ static IDirect3D9* WINAPI zzDirect3DCreate9(UINT sdkVersion) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         AttachHook(&(PVOID&)real_CreateDevice, zzCreateDevice);
-        LONG error = DetourTransactionCommit();
+        LONG error = CommitHooks();
         ModsLog("overlay: CreateDevice hook committed: %ld", error);
     }
     return d3d;

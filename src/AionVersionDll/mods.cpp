@@ -153,7 +153,7 @@ static void InstallGameMods(HMODULE game) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         InstallAll(GAME_MODS, game);
-        LONG error = DetourTransactionCommit();
+        LONG error = CommitHooks();
         ModsLog("game hooks committed: %ld", error);
     }
     s_gameModsInstalled = 1;

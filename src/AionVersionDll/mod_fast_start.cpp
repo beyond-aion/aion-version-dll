@@ -221,7 +221,7 @@ static void ApplyClockMeasure(const ClockPlace& place) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         AttachHook(&(PVOID&)real_ClockMeasure, zzClockMeasure);
-        error = DetourTransactionCommit();
+        error = CommitHooks();
     }
     ModsLog("fast start: clock measure at %p, once: %ld", place.duration.at - 1, error);
 }
@@ -327,7 +327,7 @@ static void ApplyZlib(const ZlibPlace& place) {
     DetourUpdateThread(GetCurrentThread());
     AttachHook(&(PVOID&)real_compress2, zz_compress2);
     AttachHook(&(PVOID&)real_uncompress, zz_uncompress);
-    ModsLog("fast start: zlib at %p and %p: %ld", compress, uncompress, DetourTransactionCommit());
+    ModsLog("fast start: zlib at %p and %p: %ld", compress, uncompress, CommitHooks());
 }
 
 static void HookZlib(HMODULE crySystem) {
@@ -449,7 +449,7 @@ static void ApplyRawInflate(const InflatePlace& place) {
         real_RawInflate5 = (RawInflate5_t)inflate5;
         AttachHook(&(PVOID&)real_RawInflate5, zzRawInflate5);
     }
-    ModsLog("fast start: pak inflate at %p: %ld", inflate4 ? inflate4 : inflate5, DetourTransactionCommit());
+    ModsLog("fast start: pak inflate at %p: %ld", inflate4 ? inflate4 : inflate5, CommitHooks());
 }
 
 static void HookRawInflate(HMODULE crySystem) {
@@ -929,7 +929,7 @@ static void ApplyPakTree(const PakTreePlace& place) {
     AttachHook(&(PVOID&)real_MakeCache, zzMakeCache);
     BYTE* names = ApplyBuildFileEntryMap(place);
     ModsLog("fast start: pak tree at %p, %p, %p, %p (+%x), directory at %p, names at %p: %ld", place.add, place.count, place.size, place.write,
-        s_pakTreeAt, place.makeCache, names, DetourTransactionCommit());
+        s_pakTreeAt, place.makeCache, names, CommitHooks());
 }
 
 static void HookPakTree(HMODULE crySystem) {
@@ -1005,7 +1005,7 @@ static void RestoreImportCallsBeforeUse(HMODULE crySystem) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         AttachHook(&(PVOID&)real_CreateSystemInterface, zzCreateSystemInterface);
-        DetourTransactionCommit();
+        CommitHooks();
     }
 }
 
@@ -1545,7 +1545,7 @@ static void HookRuntime() {
     if (real_stricmp) {
         AttachHook(&(PVOID&)real_stricmp, zz_stricmp);
     }
-    ModsLog("fast start: runtime string functions at %p: %ld", crt, DetourTransactionCommit());
+    ModsLog("fast start: runtime string functions at %p: %ld", crt, CommitHooks());
 }
 
 /// Once Game.dll is loaded, which needs the runtime, and before it loads the game data.
@@ -1836,7 +1836,7 @@ static void HookRandPoll(HMODULE libeay) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         AttachHook(&(PVOID&)real_RAND_poll, zzRAND_poll);
-        ModsLog("fast start: RAND_poll hooked: %ld", DetourTransactionCommit());
+        ModsLog("fast start: RAND_poll hooked: %ld", CommitHooks());
     }
 }
 
@@ -1916,7 +1916,7 @@ static void HookFillVolumeTexture(HMODULE d3dx) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         AttachHook(&(PVOID&)real_FillVolumeTexture, zzFillVolumeTexture);
-        ModsLog("fast start: D3DXFillVolumeTexture hooked: %ld", DetourTransactionCommit());
+        ModsLog("fast start: D3DXFillVolumeTexture hooked: %ld", CommitHooks());
     }
 }
 

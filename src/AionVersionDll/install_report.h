@@ -91,6 +91,9 @@ void NameImage(const wchar_t* name, HMODULE base, size_t size);
 /// DetourAttach that counts the hook for the current fix or mod. Must be called inside an open Detours transaction.
 LONG AttachHook(PVOID* real, PVOID hook);
 
+/// DetourTransactionCommit that counts the hooks AttachHook counted in the transaction as failed when the commit fails.
+LONG CommitHooks();
+
 /// A fix or mod in the table of those installed together: its id in the summary, whether mods.ini turns it on (nullptr: always, as for
 /// the fixes) and what installs it, given the module it changes (nullptr for the tables of the process start).
 struct InstallEntry {

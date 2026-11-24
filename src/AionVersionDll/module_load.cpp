@@ -2,6 +2,7 @@
 #include "module_load.h"
 #include <intrin.h>
 #include <stdlib.h>
+#include <utility>
 
 Log_t g_moduleLog = nullptr;
 
@@ -14,7 +15,8 @@ struct Watch {
     DllEntry_t realEntry;
 };
 
-static Watch s_watches[16];
+// every mod and fix that waits for a DLL takes one, as do the module dumps: 22 with all of them on
+static Watch s_watches[32];
 static int s_watchCount = 0;
 static PVOID s_ldrCookie = nullptr;
 
@@ -28,9 +30,15 @@ static BOOL WINAPI zzEntry(HINSTANCE instance, DWORD reason, LPVOID reserved) {
     return result;
 }
 
-static const DllEntry_t ENTRY_WRAPPERS[] = { zzEntry<0>, zzEntry<1>, zzEntry<2>, zzEntry<3>, zzEntry<4>, zzEntry<5>, zzEntry<6>, zzEntry<7>,
-    zzEntry<8>, zzEntry<9>, zzEntry<10>, zzEntry<11>, zzEntry<12>, zzEntry<13>, zzEntry<14>, zzEntry<15> };
-static_assert(_countof(ENTRY_WRAPPERS) == _countof(s_watches), "one entry wrapper per watch");
+template <int... index>
+static constexpr DllEntry_t EntryWrappers[] = { zzEntry<index>... };
+
+template <int... index>
+static constexpr auto MakeEntryWrappers(std::integer_sequence<int, index...>) {
+    return EntryWrappers<index...>;
+}
+
+static constexpr const DllEntry_t* ENTRY_WRAPPERS = MakeEntryWrappers(std::make_integer_sequence<int, _countof(s_watches)>());
 
 /// Points the loader's entry for the module at the wrapper of the watch.
 static bool WrapEntry(HMODULE module, int index) {
@@ -105,6 +113,7 @@ static VOID NTAPI LdrDllNotification(ULONG NotificationReason, PLDR_DLL_NOTIFICA
 void OnModuleLoad(const wchar_t* name, void (*install)(HMODULE module), bool afterEntryPoint) {
     if (s_watchCount == _countof(s_watches)) {
         MODULE_LOG("module watch: no room for %ls", name);
+        ReportStatus(InstallStatus::PatchFailed);
         return;
     }
     s_watches[s_watchCount++] = { name, install, afterEntryPoint, nullptr };

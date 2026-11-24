@@ -148,7 +148,7 @@ void Apply(const Place& place) {
     DetourUpdateThread(GetCurrentThread());
     AttachHook(&(PVOID&)real_LoadConfig, zzLoadConfig);
     AttachHook(&(PVOID&)real_SaveConfig, zzSaveConfig);
-    LONG error = DetourTransactionCommit();
+    LONG error = CommitHooks();
     if (error) {
         ModsLog("system cfg: hooks failed: %ld", error);
     }

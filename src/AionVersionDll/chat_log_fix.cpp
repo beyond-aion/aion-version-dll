@@ -183,7 +183,7 @@ void Apply(const Place& place) {
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
     AttachHook(&(PVOID&)real_ChatLogWrite, zzChatLogWrite);
-    DetourTransactionCommit();
+    CommitHooks();
 }
 
 void InstallWriter(HMODULE game) {

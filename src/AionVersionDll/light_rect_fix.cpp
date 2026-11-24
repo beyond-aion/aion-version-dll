@@ -196,7 +196,7 @@ void Apply(const Place& place) {
     for (BYTE* function : place.otherLayouts) {
         ModsLog("light rect fix: %p has another layout, left alone", function);
     }
-    DetourTransactionCommit();
+    CommitHooks();
     if (!hooked) {
         ModsLog("light rect fix: not found");
     }

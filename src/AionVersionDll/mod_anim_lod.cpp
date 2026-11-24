@@ -109,7 +109,12 @@ void Apply(const Place& place) {
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
     LONG error = AttachHook(&(PVOID&)real_Mask, AnimationMask);
-    DetourTransactionCommit();
+    if (error == NO_ERROR) {
+        error = CommitHooks();
+    } else {
+        DetourTransactionAbort();
+    }
+    // the check goes only with the hook in place
     if (error != NO_ERROR) {
         ModsLog("animation lod: could not hook the mask at %p: %ld", place.mask, error);
         return;

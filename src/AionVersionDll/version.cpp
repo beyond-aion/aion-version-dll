@@ -201,7 +201,7 @@ void InstallPatch(HINSTANCE self) {
         }
         OnModuleLoad(L"Game.dll", InstallGameFixes, true);
         InstallMods();
-        LONG error = DetourTransactionCommit();
+        LONG error = CommitHooks();
         ModsLog("fixes committed: %ld", error);
 
         InstallScope affinity("affinity_fix");
