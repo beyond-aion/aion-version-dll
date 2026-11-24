@@ -150,6 +150,7 @@
     <ClCompile Include="mod_buff_limit.cpp" />
     <ClCompile Include="mod_macro_limit.cpp" />
     <ClCompile Include="mod_move_reports.cpp" />
+    <ClCompile Include="mod_table_dump.cpp" />
     <ClCompile Include="mod_quest_targets.cpp" />
     <ClCompile Include="mod_stat_precision.cpp" />
     <ClCompile Include="mod_multi_client.cpp" />

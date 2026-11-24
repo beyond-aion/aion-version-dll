@@ -33,6 +33,7 @@ struct ModsConfig {
     bool uiScaleFit;
     int largeGlyphFrom; // pixel height
     int fastStart; // FAST_START_*
+    bool tableDump;
     bool mimalloc;
     bool plainSystemCfg;
 };
@@ -93,6 +94,8 @@ void InstallStatPrecision(HMODULE game);
 void InstallQuestTargets(HMODULE game);
 void InstallMoveReports(HMODULE game);
 void InstallOthersSnap(HMODULE game);
+/// Loads the largest tables of 4.x clients from the dumps the client keeps in Data/Dump.
+void InstallTableDump(HMODULE game);
 void InstallUiScale(HMODULE game);
 void InstallMultiClient(HMODULE game);
 void InstallSkipAgreement(HMODULE game);

@@ -44,6 +44,7 @@
         quick_destroy        applied            Game.dll+31E7FD              writes 4/4, hooks 0/0, searches 7, misses 0, ambiguous 0
         skip_logo            applied            Game.dll+1B2AC1              writes 6/6, hooks 0/0, searches 2, misses 0, ambiguous 0
         fast_load            applied            Game.dll+A8F60               writes 0/0, hooks 3/3, searches 7, misses 1, ambiguous 0
+        table_dump           not_applicable     -                            writes 0/0, hooks 0/0, searches 1, misses 1, ambiguous 0
         ui_xml               applied            Game.dll+A65C0               writes 0/0, hooks 3/3, searches 2, misses 0, ambiguous 0
         buff_count           applied            Game.dll+1CED8E              writes 12/12, hooks 5/5, searches 10, misses 1, ambiguous 0
         own_grid             applied            Game.dll+1D0516              writes 4/4, hooks 0/0, searches 4, misses 0, ambiguous 0

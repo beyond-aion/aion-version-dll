@@ -81,6 +81,7 @@ Optional additions to the game client, which can be enabled via `mods.ini`:
 - **Skip agreement:** skips the user agreement on login.
 - **Quick destroy:** asks the usual yes-or-no question for the items that otherwise want a word typed before them.
 - **Faster loading:** different settings to speed up client start and exit times.
+- **Table dumps (4.x):** loads the item, skill, NPC and other large tables from dumps the client keeps in `Data/Dump` (`[Performance] TableDump=1`, about 200 MB): from the second start the login screen comes 3 seconds sooner on 4.8 and twice as fast on 4.6. The client has this as an unused developer switch; a dump is rebuilt when its game data changes or the client did not quit normally. 5.x clients keep such dumps by themselves.
 - **UI scale (5.x):** different settings to resolve UI scaling issues at high resolutions.
 - **Plain system.cfg:** reads and saves `system.cfg` in plain text, so it can be edited. A client without the mod ignores the settings of such a file and starts with its defaults.
 
