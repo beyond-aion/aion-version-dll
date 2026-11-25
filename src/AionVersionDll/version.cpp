@@ -97,6 +97,7 @@ void InstallLightRectFixOnLoad();
 void InstallGeneralPassLightFixOnLoad();
 void InstallCubeMapFovFixOnLoad();
 void InstallFlatBoxVisibilityFixOnLoad();
+void InstallFadeDepthWriteFixOnLoad();
 void InstallScreenshotFix();
 
 /// The fixes of Game.dll in the order they install, once its entry point has run.
@@ -182,6 +183,7 @@ static const InstallEntry PROCESS_FIXES[] = {
     { "general_pass_light_fix", nullptr, [](HMODULE) { InstallGeneralPassLightFixOnLoad(); } },
     { "cube_map_fov_fix", nullptr, [](HMODULE) { InstallCubeMapFovFixOnLoad(); } },
     { "flat_box_visibility_fix", nullptr, [](HMODULE) { InstallFlatBoxVisibilityFixOnLoad(); } },
+    { "fade_depth_write_fix", nullptr, [](HMODULE) { InstallFadeDepthWriteFixOnLoad(); } },
     { "screenshot_fix", nullptr, [](HMODULE) { InstallScreenshotFix(); } },
 };
 

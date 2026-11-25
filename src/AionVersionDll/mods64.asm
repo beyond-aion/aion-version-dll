@@ -9,6 +9,10 @@ EXTERN g_generalPassResume: QWORD
 EXTERN g_currentLightOffset: QWORD
 EXTERN g_itemLightCountOffset: QWORD
 EXTERN g_itemLightsOffset: QWORD
+EXTERN g_fadeDepthOffResume: QWORD
+EXTERN g_fadeDepthLockResume: QWORD
+EXTERN g_fadeFlagsOffset: QWORD
+EXTERN g_fadeDepthLock: BYTE
 
 .code
 
@@ -149,5 +153,23 @@ resume:
   jmp qword ptr [g_generalPassResume]
 GeneralPassLightStub ENDP
 
+; Entered in the renderer's setting of an object's alpha where the shader does not keep depth writes: notes that the lock is due.
+FadeDepthOffStub PROC
+  mov byte ptr [g_fadeDepthLock], 1
+  jmp qword ptr [g_fadeDepthOffResume]
+FadeDepthOffStub ENDP
+
+; Entered after its SetState call, before or dword [rbx+flags], 210h: sets the depth write lock (40h) when it is due.
+FadeDepthLockStub PROC
+  cmp byte ptr [g_fadeDepthLock], 0
+  je resume
+  mov byte ptr [g_fadeDepthLock], 0
+  push rax
+  mov rax, g_fadeFlagsOffset
+  or dword ptr [rbx + rax], 40h
+  pop rax
+resume:
+  jmp qword ptr [g_fadeDepthLockResume]
+FadeDepthLockStub ENDP
 
 END
