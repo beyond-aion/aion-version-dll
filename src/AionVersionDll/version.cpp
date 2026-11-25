@@ -94,6 +94,7 @@ void InstallServerCheckFix(HMODULE game);
 void InstallPetDecorationFix(HMODULE game);
 void InstallMaxFpsFix(HMODULE game);
 void InstallLightRectFixOnLoad();
+void InstallGeneralPassLightFixOnLoad();
 void InstallScreenshotFix();
 
 /// The fixes of Game.dll in the order they install, once its entry point has run.
@@ -176,6 +177,7 @@ static const InstallEntry PROCESS_FIXES[] = {
     { "crash_log", nullptr, [](HMODULE) { InstallCrashLog(); } },
     { "reserve_fix", nullptr, [](HMODULE) { InstallReserveFix(); } },
     { "light_rect_fix", nullptr, [](HMODULE) { InstallLightRectFixOnLoad(); } },
+    { "general_pass_light_fix", nullptr, [](HMODULE) { InstallGeneralPassLightFixOnLoad(); } },
     { "screenshot_fix", nullptr, [](HMODULE) { InstallScreenshotFix(); } },
 };
 

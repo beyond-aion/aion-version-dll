@@ -36,6 +36,7 @@ The DLL automatically applies fixes for the following problems:
 - no stretched picture or misplaced cursor at resolutions exceeding 2560 pixels wide or 1920 pixels high
 - no blurred picture on screens scaled above 100 %
 - no straight-edged cut-off light from lamps and fires that moves with the camera when using the High Quality engine
+- no walls that go dark and back with a slight turn of the camera, as at the Gelkmaros fortress, when using the High Quality engine
 - the frame rate is no longer capped at 60 (120 in 5.x clients) by default; a `g_maxfps` set in `system.cfg` still applies
 </details>
 

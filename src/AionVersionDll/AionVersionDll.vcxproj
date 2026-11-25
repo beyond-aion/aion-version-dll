@@ -137,6 +137,7 @@
     <ClCompile Include="install_report.cpp" />
     <ClCompile Include="import_calls.cpp" />
     <ClCompile Include="ip_fix.cpp" />
+    <ClCompile Include="general_pass_light_fix.cpp" />
     <ClCompile Include="light_rect_fix.cpp" />
     <ClCompile Include="module_load.cpp" />
     <ClCompile Include="module_dump.cpp" />

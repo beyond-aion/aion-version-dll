@@ -5,6 +5,10 @@ EXTERN QuestTokenIndex: PROC
 EXTERN g_questTokenTable: QWORD
 EXTERN g_questTokenEnd: QWORD
 EXTERN g_questTokenLoop: QWORD
+EXTERN g_generalPassResume: QWORD
+EXTERN g_currentLightOffset: QWORD
+EXTERN g_itemLightCountOffset: QWORD
+EXTERN g_itemLightsOffset: QWORD
 
 .code
 
@@ -125,5 +129,24 @@ QuestTokenStub PROC
   pop rax
   jmp qword ptr [g_questTokenLoop]
 QuestTokenStub ENDP
+
+; Entered in place of the renderer's general pass with the renderer in rcx (general_pass_light_fix.cpp): when it has no current light
+; and the item has lights, makes the first of them current, then goes on into the pass. Changes rax and the flags only.
+GeneralPassLightStub PROC
+  mov rax, g_currentLightOffset
+  cmp qword ptr [rcx + rax], 0
+  jne resume
+  mov rax, g_itemLightCountOffset
+  cmp dword ptr [rcx + rax], 0
+  jle resume
+  push rdx
+  mov rax, g_itemLightsOffset
+  mov rdx, qword ptr [rcx + rax]
+  mov rax, g_currentLightOffset
+  mov qword ptr [rcx + rax], rdx
+  pop rdx
+resume:
+  jmp qword ptr [g_generalPassResume]
+GeneralPassLightStub ENDP
 
 END
