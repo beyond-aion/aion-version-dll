@@ -9,6 +9,7 @@
         reserve_fix          applied            ntdll.dll+EEE0               writes 0/0, hooks 2/2, searches 0, misses 0, ambiguous 0
         light_rect_fix       waiting            -                            writes 0/0, hooks 0/0, searches 0, misses 0, ambiguous 0
         general_pass_light_fix waiting            -                            writes 0/0, hooks 0/0, searches 0, misses 0, ambiguous 0
+        cube_map_fov_fix     waiting            -                            writes 0/0, hooks 0/0, searches 0, misses 0, ambiguous 0
         screenshot_fix       waiting            -                            writes 0/0, hooks 0/0, searches 0, misses 0, ambiguous 0
         glyph_cells          waiting            -                            writes 0/0, hooks 0/0, searches 0, misses 0, ambiguous 0
         fast_start           applied            kernelbase.dll+23D40         writes 0/0, hooks 7/7, searches 3, misses 0, ambiguous 0
@@ -21,6 +22,7 @@
         chat_log_fix         applied            kernel32.dll+D5E4            writes 0/0, hooks 2/2, searches 0, misses 0, ambiguous 0
         light_rect_fix       applied            XRenderD3D9.dll+21870        writes 0/0, hooks 2/2, searches 1, misses 0, ambiguous 0
         general_pass_light_fix applied            XRenderD3D9.dll+7F7A0        writes 0/0, hooks 1/1, searches 4, misses 0, ambiguous 0
+        cube_map_fov_fix     applied            XRenderD3D9.dll+11EE50       writes 0/0, hooks 1/1, searches 1, misses 0, ambiguous 0
         screenshot_fix       applied            XRenderD3D9.dll+117FC0       writes 0/0, hooks 2/2, searches 2, misses 0, ambiguous 0
         glyph_cells          not_applicable     -                            writes 0/0, hooks 0/0, searches 1, misses 1, ambiguous 0
         fast_start           applied            kernelbase.dll+23D40         writes 1/1, hooks 12/12, searches 12, misses 3, ambiguous 0
