@@ -149,4 +149,5 @@ resume:
   jmp qword ptr [g_generalPassResume]
 GeneralPassLightStub ENDP
 
+
 END

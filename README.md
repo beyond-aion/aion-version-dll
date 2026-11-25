@@ -38,6 +38,7 @@ The DLL automatically applies fixes for the following problems:
 - no straight-edged cut-off light from lamps and fires that moves with the camera when using the High Quality engine
 - no walls that go dark and back with a slight turn of the camera, as at the Gelkmaros fortress, when using the High Quality engine
 - no straight seams in the sky that water and other shiny surfaces reflect
+- no pale straight-edged slabs that come and go on the water of ponds lit from below, as in Cygnea, Kaldor and Enshar
 - the frame rate is no longer capped at 60 (120 in 5.x clients) by default; a `g_maxfps` set in `system.cfg` still applies
 </details>
 

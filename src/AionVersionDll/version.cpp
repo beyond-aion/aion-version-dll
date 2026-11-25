@@ -96,6 +96,7 @@ void InstallMaxFpsFix(HMODULE game);
 void InstallLightRectFixOnLoad();
 void InstallGeneralPassLightFixOnLoad();
 void InstallCubeMapFovFixOnLoad();
+void InstallFlatBoxVisibilityFixOnLoad();
 void InstallScreenshotFix();
 
 /// The fixes of Game.dll in the order they install, once its entry point has run.
@@ -180,6 +181,7 @@ static const InstallEntry PROCESS_FIXES[] = {
     { "light_rect_fix", nullptr, [](HMODULE) { InstallLightRectFixOnLoad(); } },
     { "general_pass_light_fix", nullptr, [](HMODULE) { InstallGeneralPassLightFixOnLoad(); } },
     { "cube_map_fov_fix", nullptr, [](HMODULE) { InstallCubeMapFovFixOnLoad(); } },
+    { "flat_box_visibility_fix", nullptr, [](HMODULE) { InstallFlatBoxVisibilityFixOnLoad(); } },
     { "screenshot_fix", nullptr, [](HMODULE) { InstallScreenshotFix(); } },
 };
 
