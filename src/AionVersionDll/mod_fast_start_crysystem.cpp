@@ -94,13 +94,13 @@ typedef int(__cdecl* Uncompress_t)(BYTE* dest, unsigned long* destLen, const BYT
 
 static Compress2_t real_compress2 = nullptr;
 static Uncompress_t real_uncompress = nullptr;
-static bool s_blocksInMemory = false;
 
 static int __cdecl zz_compress2(BYTE* dest, unsigned long* destLen, const BYTE* source, unsigned long sourceLen, int level) {
-    // zlib's levels 0 to 9 mean the same in libdeflate. 4.x clients ask for level 6, the default, for blocks that stay in memory;
-    // level 1 takes a quarter second less in 4.8 and 1 MB more for its 220 MB of data. 5.x clients store theirs in the table dump.
+    // zlib's levels 0 to 9 mean the same in libdeflate. The clients ask for level 6, the default: 4.x for blocks that stay in memory,
+    // where level 1 takes a quarter second less in 4.8 and 1 MB more for its 220 MB of data, and 5.x for the blocks of tables.dmp,
+    // where it makes the rebuild of the dump faster and the heap noted in config.ini about 1 MB larger. Any zlib reads level 1 blocks.
     int deflateLevel = level == -1 ? 6 : level;
-    if (s_blocksInMemory && deflateLevel == 6) {
+    if (deflateLevel == 6) {
         deflateLevel = 1;
     }
     static thread_local libdeflate_compressor* compressors[10] = {};
@@ -142,8 +142,6 @@ static BYTE* FindZlibFunction(HMODULE crySystem, const char* pattern, const void
 struct ZlibPlace {
     BYTE* compress = nullptr;
     BYTE* uncompress = nullptr;
-    // 4.x: zlib 1.1.4, which keeps the game data in memory as blocks
-    bool blocksInMemory = false;
 };
 
 static ZlibPlace LocateZlib(HMODULE crySystem) {
@@ -156,7 +154,6 @@ static ZlibPlace LocateZlib(HMODULE crySystem) {
             "7B F0 48 8B FA 8B 94 24 C0 00 00 00 44 8D 48 58 4C 8D 05", version);
         uncompress = FindZlibFunction(crySystem, "4C 8B DC 48 81 EC 88 00 00 00 8B 02 4D 89 43 98 49 89 4B A8 45 89 4B A0 89 44 24 38 33 C0 49 89 "
             "7B 20 48 8B FA 49 8D 4B 98 44 8D 40 58 48 8D 15", version);
-        place.blocksInMemory = true;
     } else if (const void* version = FindBytes(crySystem, VERSION5, sizeof(VERSION5))) {
         compress = FindZlibFunction(crySystem, "4C 8B DC 57 48 81 EC 80 00 00 00 8B 02 4D 89 43 98 45 89 4B A0 49 89 4B A8 89 44 24 38 33 C0 48 8B "
             "FA 8B 94 24 B0 00 00 00 4C 8D 05", version);
@@ -167,7 +164,6 @@ static ZlibPlace LocateZlib(HMODULE crySystem) {
 }
 
 static void ApplyZlib(const ZlibPlace& place) {
-    s_blocksInMemory |= place.blocksInMemory;
     BYTE* compress = place.compress;
     BYTE* uncompress = place.uncompress;
     if (!compress || !uncompress) {
