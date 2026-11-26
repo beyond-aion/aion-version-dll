@@ -5,11 +5,12 @@
 #include <string>
 #include <vector>
 #include <detours/detours.h>
+#include <atomic>
 
 ModsConfig g_modsConfig = {};
 volatile int* g_gameState = nullptr;
 
-static volatile LONG s_gameModsInstalled = 0;
+static std::atomic<bool> s_gameModsInstalled = false;
 
 static constexpr int STATE_IN_WORLD = 14;
 
@@ -151,7 +152,7 @@ static void InstallGameMods(HMODULE game) {
         LONG error = CommitHooks();
         ModsLog("game hooks committed: %ld", error);
     }
-    s_gameModsInstalled = 1;
+    s_gameModsInstalled = true;
     LogInstallSummary("with Game.dll", true);
 }
 

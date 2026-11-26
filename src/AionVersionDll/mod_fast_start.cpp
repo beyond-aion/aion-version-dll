@@ -21,6 +21,7 @@
 #include <detours/detours.h>
 #include "install_report.h"
 #include <libdeflate.h>
+#include <atomic>
 
 #pragma comment(lib, "bcrypt.lib")
 
@@ -31,7 +32,7 @@
 // to the call in the loop instead. A client that is really unloading is still waited for.
 
 static decltype(GetTickCount)* real_GetTickCount = GetTickCount;
-static BYTE* volatile s_waitTickReturn = nullptr;
+static std::atomic<BYTE*> s_waitTickReturn = nullptr;
 
 static DWORD WINAPI zzGetTickCount() {
     DWORD now = real_GetTickCount();
@@ -105,7 +106,7 @@ static const CLSID CLSID_DXDIAG_PROVIDER = { 0xA65B8071, 0x3BFE, 0x4213, { 0x9A,
 
 static decltype(CoCreateInstance)* real_CoCreateInstance = nullptr;
 static decltype(RegSetValueExA)* real_RegSetValueExA = nullptr;
-static volatile bool s_dxDiagSkipped = false;
+static std::atomic<bool> s_dxDiagSkipped = false;
 
 /// The client collects a DirectX diagnostic report at every start, which takes about 3 seconds, only to store it in the registry
 /// (HKCU\Software\Aion\Client\SystemInfo). Without the provider it skips the report and keeps the values stored before.

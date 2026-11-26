@@ -5,6 +5,7 @@
 #include <string.h>
 #include <string>
 #include <utility>
+#include <atomic>
 
 // 4.x clients can keep their largest tables (items, skills, NPCs, spawns and more) as binary dumps in Data/Dump and load them from there on
 // the next start instead of parsing the XML. The switch is a developer flag of the game object (CXGame) that no code sets; with it, the table
@@ -181,7 +182,7 @@ constexpr int MAX_METHODS = 32;
 DumpMethod_t s_real[MAX_METHODS];
 
 bool s_dumpActive = false;
-volatile bool s_writerSeen = false;
+std::atomic<bool> s_writerSeen = false;
 bool s_trusted = false;     // the dumps of the last run were complete, so NormalStop goes back to true right after the client clears it
 SRWLOCK s_flagLock = SRWLOCK_INIT; // the game thread (writers) and the watch thread both write NormalStop
 bool s_isWriter[MAX_METHODS] = {};

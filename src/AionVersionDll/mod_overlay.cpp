@@ -7,6 +7,7 @@
 #include "install_report.h"
 #include "dxvk_hud_font.h"
 #include <math.h>
+#include <atomic>
 
 // Text size of the DXVK HUD, and the chat tab text color for the label.
 static constexpr int FONT_SIZE = 16;
@@ -63,9 +64,9 @@ static bool Failed(HRESULT result, int step, const char* what) {
 }
 
 // Where the text was drawn last, in back buffer pixels, and the size of the back buffer, for dragging it with the mouse.
-static volatile LONG s_textLeft, s_textTop, s_textWidth, s_textHeight;
-static volatile LONG s_backBufferWidth, s_backBufferHeight;
-static volatile bool s_textVisible = false;
+static std::atomic<LONG> s_textLeft, s_textTop, s_textWidth, s_textHeight;
+static std::atomic<LONG> s_backBufferWidth, s_backBufferHeight;
+static std::atomic<bool> s_textVisible = false;
 
 static HWND s_window = nullptr;
 static WNDPROC real_WindowProc = nullptr;
@@ -470,7 +471,7 @@ static HRESULT STDMETHODCALLTYPE zzReset(IDirect3DDevice9* device, D3DPRESENT_PA
     return result;
 }
 
-static IDirect3DDevice9* volatile s_device = nullptr;
+static std::atomic<IDirect3DDevice9*> s_device = nullptr;
 
 static ULONG STDMETHODCALLTYPE zzRelease(IDirect3DDevice9* device) {
     ULONG references = real_Release(device);
