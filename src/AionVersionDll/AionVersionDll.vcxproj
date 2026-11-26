@@ -164,6 +164,9 @@
     <ClCompile Include="profiler.cpp" />
     <ClCompile Include="mod_quick_destroy.cpp" />
     <ClCompile Include="mod_fast_start.cpp" />
+    <ClCompile Include="mod_fast_start_crysystem.cpp" />
+    <ClCompile Include="mod_fast_start_runtime.cpp" />
+    <ClCompile Include="mod_fast_start_tables.cpp" />
     <ClCompile Include="mod_mimalloc.cpp" />
     <ClCompile Include="mod_system_cfg.cpp" />
     <ClCompile Include="mod_anim_lod.cpp" />
@@ -202,6 +205,7 @@
     <ClInclude Include="install_report.h" />
     <ClInclude Include="chat_log_fix.h" />
     <ClInclude Include="module_load.h" />
+    <ClInclude Include="mod_fast_start.h" />
     <ClInclude Include="mods.h" />
     <ClInclude Include="mods_log.h" />
     <ClInclude Include="ping.h" />
