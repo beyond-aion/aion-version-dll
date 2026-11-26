@@ -131,6 +131,10 @@ static void InstallGameMods(HMODULE game) {
     s_gameModsInstalled = 1;
 }
 
+#if defined(_M_AMD64)
+void KeepGraphicsSettings(); // graphics_settings_fix.cpp
+#endif
+
 /// Must be called inside an open Detours transaction.
 void InstallMods() {
     LoadConfig();
@@ -140,6 +144,9 @@ void InstallMods() {
     OnModuleLoad(L"CryFont.dll", InstallGlyphCells, false);
     if (g_modsConfig.fastStart != FAST_START_OFF) {
         InstallFastStart();
+#if defined(_M_AMD64)
+        KeepGraphicsSettings();
+#endif
     }
     if (g_modsConfig.mimalloc) {
         InstallMimalloc();
