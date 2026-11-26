@@ -22,6 +22,7 @@
 #include "install_report.h"
 #include <libdeflate.h>
 #include <atomic>
+#include <memory>
 
 #pragma comment(lib, "bcrypt.lib")
 
@@ -1263,7 +1264,7 @@ struct FieldIndex {
     std::vector<DWORD> hashes;
 };
 
-static std::unordered_map<const DWORD*, FieldIndex*>* s_fieldIndex;
+static std::unordered_map<const DWORD*, std::unique_ptr<FieldIndex>>* s_fieldIndex;
 
 static const wchar_t* FieldName(const DWORD* fields, int i) {
     return *(const wchar_t* const*)(fields + 8 * i + 2);
@@ -1307,8 +1308,8 @@ static size_t FindSlot(const DWORD* fields, const FieldIndex& index, const wchar
     }
 }
 
-static FieldIndex* IndexFields(const DWORD* fields) {
-    FieldIndex* index = new FieldIndex();
+static std::unique_ptr<FieldIndex> IndexFields(const DWORD* fields) {
+    auto index = std::make_unique<FieldIndex>();
     int count = 0;
     while (fields[8 * count]) {
         count++;
@@ -1348,15 +1349,15 @@ static __int64 __fastcall zzSetField(const DWORD* fields, __int64 row, const wch
     if (!index) {
         AcquireSRWLockShared(&s_fieldLock);
         auto list = s_fieldIndex->find(fields);
-        index = list != s_fieldIndex->end() ? list->second : nullptr;
+        index = list != s_fieldIndex->end() ? list->second.get() : nullptr;
         ReleaseSRWLockShared(&s_fieldLock);
         if (!index) {
             AcquireSRWLockExclusive(&s_fieldLock);
-            FieldIndex*& entry = (*s_fieldIndex)[fields];
+            std::unique_ptr<FieldIndex>& entry = (*s_fieldIndex)[fields];
             if (!entry) {
                 entry = IndexFields(fields);
             }
-            index = entry;
+            index = entry.get();
             ReleaseSRWLockExclusive(&s_fieldLock);
         }
         lastFields = fields;
@@ -1422,7 +1423,7 @@ static void ApplyFieldLookup(HMODULE game, const FastLoadPlace& place) {
     }
     s_game = game;
     s_gameEnd = (BYTE*)game + ModuleImageSize(game);
-    s_fieldIndex = new std::unordered_map<const DWORD*, FieldIndex*>();
+    s_fieldIndex = new std::unordered_map<const DWORD*, std::unique_ptr<FieldIndex>>(); // never freed: no destructors at exit
     real_SetField = (SetField_t)place.fieldLookup;
     AttachHook(&(PVOID&)real_SetField, zzSetField);
     ModsLog("fast start: field lookup at %p", place.fieldLookup);

@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <detours/detours.h>
+#include <memory>
 
 #pragma comment(lib, "windowscodecs.lib")
 
@@ -220,7 +221,7 @@ static bool Publish(const std::string& temporary, std::string& file) {
 }
 
 static DWORD WINAPI WriteScreenshot(LPVOID parameter) {
-    ScreenshotJob* job = (ScreenshotJob*)parameter;
+    std::unique_ptr<ScreenshotJob> job((ScreenshotJob*)parameter);
     LONGLONG started = Now();
     HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     char suffix[24];
@@ -239,12 +240,11 @@ static DWORD WINAPI WriteScreenshot(LPVOID parameter) {
     }
     ModsLog("screenshot: %s %s%s in %.0f ms", job->file.c_str(), ok ? "written" : "could not be written", copied ? " and put on the clipboard" : "",
         MillisSince(started));
-    delete job;
     return 0;
 }
 
 /// Copies the back buffer into memory: resolved first if multisampled, then through a surface in system memory. Only 32-bit formats.
-static ScreenshotJob* CopyBackBuffer(IDirect3DSurface9* surface, const char* file) {
+static std::unique_ptr<ScreenshotJob> CopyBackBuffer(IDirect3DSurface9* surface, const char* file) {
     D3DSURFACE_DESC desc;
     IDirect3DDevice9* device = nullptr;
     if (FAILED(surface->GetDesc(&desc)) || (desc.Format != D3DFMT_X8R8G8B8 && desc.Format != D3DFMT_A8R8G8B8)
@@ -254,7 +254,7 @@ static ScreenshotJob* CopyBackBuffer(IDirect3DSurface9* surface, const char* fil
     IDirect3DSurface9* resolved = nullptr;
     IDirect3DSurface9* copy = nullptr;
     IDirect3DSurface9* source = surface;
-    ScreenshotJob* job = nullptr;
+    std::unique_ptr<ScreenshotJob> job;
     bool ok = true;
     if (desc.MultiSampleType != D3DMULTISAMPLE_NONE) {
         ok = SUCCEEDED(device->CreateRenderTarget(desc.Width, desc.Height, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &resolved, nullptr))
@@ -265,7 +265,7 @@ static ScreenshotJob* CopyBackBuffer(IDirect3DSurface9* surface, const char* fil
     ok = ok && SUCCEEDED(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, &copy, nullptr))
         && SUCCEEDED(device->GetRenderTargetData(source, copy)) && SUCCEEDED(copy->LockRect(&locked, nullptr, D3DLOCK_READONLY));
     if (ok) {
-        job = new ScreenshotJob{ file, desc.Width, desc.Height, std::vector<BYTE>((size_t)desc.Width * desc.Height * 4) };
+        job.reset(new ScreenshotJob{ file, desc.Width, desc.Height, std::vector<BYTE>((size_t)desc.Width * desc.Height * 4) });
         for (UINT row = 0; row < desc.Height; row++) {
             memcpy(job->pixels.data() + (size_t)row * desc.Width * 4, (const BYTE*)locked.pBits + (size_t)row * locked.Pitch, desc.Width * 4);
         }
@@ -285,14 +285,16 @@ static HRESULT WINAPI zzSaveSurface(const char* file, int format, IDirect3DSurfa
     if (!s_ownName || format != D3DXIFF_JPG || palette || rect || !surface || !file) {
         return real_SaveSurface(file, format, surface, palette, rect);
     }
-    ScreenshotJob* job = CopyBackBuffer(surface, file);
+    std::unique_ptr<ScreenshotJob> job = CopyBackBuffer(surface, file);
     if (job) {
         job->clipboard = s_copyNext;
         s_copyNext = false;
     }
-    HANDLE thread = job ? CreateThread(nullptr, 0, WriteScreenshot, job, 0, nullptr) : nullptr;
-    if (!thread) {
-        delete job;
+    HANDLE thread = job ? CreateThread(nullptr, 0, WriteScreenshot, job.get(), 0, nullptr) : nullptr;
+    if (thread) {
+        (void)job.release(); // the thread owns it now
+    } else {
+        job.reset();
         s_copyNext = false;
         ModsLog("screenshot: %s saved in the frame, the image could not be copied", file);
         return real_SaveSurface(file, format, surface, palette, rect);
