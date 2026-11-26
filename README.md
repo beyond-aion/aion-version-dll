@@ -24,7 +24,6 @@ The DLL automatically applies fixes for the following problems:
 
 - the camera no longer stutters or hangs when moving it via the mouse on Windows 10 (since version 1709) and 11
 - camera movement is no longer blocked when using screen capture software such as Bandicam
-- the camera no longer jumps, and the cursor no longer lands in the middle of the screen, after Alt+Tab with a mouse button held
 - the camera follows the Windows pointer acceleration curve ("Enhance pointer precision") as the client does without this DLL; `[Camera] Acceleration=0` turns with the mouse counts alone
 </details>
 
@@ -74,7 +73,7 @@ Loads [DXVK](https://github.com/doitsujin/dxvk) if present, which can improve pe
 ## Client mods
 Optional additions to the game client, which can be enabled via `mods.ini`:
 - **Chat time:** displays message times in the chat window, as 5.x clients already support.
-- **Ping overlay:** displays the round trip time to the game server in the top left corner of the screen.
+- **Ping overlay:** displays the round trip time to the game server in the top left corner of the screen, below the DXVK frame rate; drag it with the left mouse button to move it.
 - **Anti AFK:** no disconnect after 60 minutes without input, and none 26 hours after logging in.
 - **Macros:** raise the macro limit beyond the client's default (the game server must also support it).
 - **Buffs:** displays up to 64 buffs and debuffs each, in a configurable layout.
@@ -86,12 +85,13 @@ Optional additions to the game client, which can be enabled via `mods.ini`:
 - **Multi client:** allows running more than two clients simultaneously.
 - **Skip agreement:** skips the user agreement on login.
 - **Quick destroy:** asks the usual yes-or-no question for the items that otherwise want a word typed before them.
-- **Faster loading (`[Performance] LoadingMode`):** speeds up client start and exit. 4.x clients also load the large tables (items, skills, NPCs) from dumps kept in `Data/Dump` (about 200 MB), as 5.x clients do by themselves; they are written anew when a `.pak` file of the game data changes or the client did not quit normally.
+- **Faster loading (`[Performance] LoadingMode`):** speeds up client start and exit. 4.x clients also load the large tables (items, skills, NPCs) from dumps kept in `Data/Dump` (about 200 MB), as 5.x clients do by themselves; they are written anew when a `.pak` file of the game data changes or the client did not quit normally. `LoadingMode=2` also skips the logo before the login screen and the picture after quitting.
+- **Mimalloc (`[Performance] Mimalloc`):** uses [mimalloc](https://github.com/microsoft/mimalloc) in place of the game's memory allocators, which speeds up loading and can improve performance overall, at the cost of 600 MB to 1 GB more memory.
 - **Animation level of detail (`[Performance] AnimationLod`):** animates characters farther than this many meters from your character every second frame, twice as far every fourth, and those off the screen or far from the camera every eighth, with their skinning; your own character and those within that distance of it always every frame, however far the camera is. A crowd costs noticeably less.
 - **UI scale (5.x):** different settings to resolve UI scaling issues at high resolutions.
 - **Plain system.cfg:** reads and saves `system.cfg` in plain text, so it can be edited. A client without the mod ignores the settings of such a file and starts with its defaults.
 
-The mods find their places in the client by content rather than by fixed addresses, so they work with different client versions (3.9, 4.6, 4.8, 5.6 and 5.8 have been verified). A fix or mod that finds nothing to change simply stays off, which `version.log` next to `version.dll` shows, together with any problems in `mods.ini`. When the client crashes, `version.log` also gets the crash: where it happened, the registers and the calls that led there.
+The mods find their places in the client by content rather than by fixed addresses, so they work with different client versions (3.9, 4.6, 4.8, 5.6 and 5.8 have been verified). A fix or mod that finds nothing to change simply stays off, which `version.log` next to `version.dll` shows with `[Logging] Enabled=1`, together with any problems in `mods.ini`. When the client crashes, `version.log` also gets the crash: where it happened, the registers and the calls that led there.
 
 ## Checking a client without starting it
 `modcheck.exe`, built from the same sources, tells what the fixes and mods find in a client from images of its modules:
@@ -100,13 +100,15 @@ The mods find their places in the client by content rather than by fixed address
 
 `tests/modcheck46.txt`, `modcheck48.txt`, `modcheck49.txt`, `modcheck56.txt` and `modcheck58.txt` hold the summaries for 4.6, 4.8, 4.9, 5.6 and 5.8 with every mod on; a change to a search that finds another place shows as a change of its line there.
 
+The other keys of `[Debug]` measure the client and write to `version.log` as well: `Profile` samples the start, `ProfileWorld` the frame in the world, with call stacks, and `FrameStat` writes the frame times; `mods.ini` describes them.
+
 ## Building
 This project depends on [MS Detours](https://github.com/Microsoft/Detours), [libdeflate](https://github.com/ebiggers/libdeflate) and [mimalloc](https://github.com/microsoft/mimalloc), which [vcpkg](https://vcpkg.io) fetches and builds as static libraries on the first build, as listed in `vcpkg.json`. Visual Studio 2026 includes vcpkg, so the project builds straight away; another vcpkg is used when `VCPKG_ROOT` points to it. The build copies `mods.ini` next to `version.dll`. Only the 64-bit client is supported: the 32-bit build was dropped, as it carried a part of the fixes and none of the mods (see [32-bit clients](#32-bit-clients)). The overlay triplet in `triplets` builds mimalloc with `MI_USE_RTLGENRANDOM`: its default random seed, `BCryptGenRandom`, hangs the 64-bit client on Windows 7 while Windows loads `version.dll`.
 
 ## Installation
 1. Copy `version.dll` to the `bin64` folder within the game root directory.
 2. **Optional:** If you want to enable any mods, copy `mods.ini` to the `bin64` folder and edit the file.
-3. **Optional:** If you want to use DXVK, copy `d3d9.dll` from the [latest DXVK release](https://github.com/doitsujin/dxvk/releases) to the same folders and make sure you're using the latest graphics driver. If your graphics card is incompatible because it is too old, you can try the [latest DXVK-Sarek release](https://github.com/pythonlover02/DXVK-Sarek/releases/latest) instead.  
+3. **Optional:** If you want to use DXVK, copy `d3d9.dll` (x64) from the [latest DXVK release](https://github.com/doitsujin/dxvk/releases) to the same folder and make sure you're using the latest graphics driver. If your graphics card is incompatible because it is too old, you can try the [latest DXVK-Sarek release](https://github.com/pythonlover02/DXVK-Sarek/releases/latest) instead.  
 DXVK can be tweaked via an optional config file. See below for recommended settings.
 
 ## 32-bit clients
