@@ -17,7 +17,8 @@
 void InstallPatch(HINSTANCE self);
 
 // the modules in the order the client loads them; Game.dll last, whose mods end with the final summary
-static const wchar_t* const MODULES[] = { L"CrySystem.dll", L"CryFont.dll", L"XRenderD3D9.dll", L"CryAnimation.dll", L"Game.dll" };
+static const wchar_t* const MODULES[] = { L"CrySystem.dll", L"CryFont.dll", L"XRenderD3D9.dll", L"CryAnimation.dll", L"Cry3DEngine.dll",
+    L"Game.dll" };
 
 /// Puts the image back at its base and registers its unwind table, which the searches use to find where functions start.
 static HMODULE MapDump(const std::wstring& path, ULONG_PTR base) {

@@ -95,7 +95,7 @@ The mods find their places in the client by content rather than by fixed address
 
 ## Checking a client without starting it
 `modcheck.exe`, built from the same sources, tells what the fixes and mods find in a client from images of its modules:
-1. Start the client once with only `[Logging] Enabled=1` and `[Debug] DumpModules=1` in `mods.ini` (every mod off). `version.dll` writes the images of `Game.dll`, `CrySystem.dll`, `CryFont.dll`, `XRenderD3D9.dll` and `CryAnimation.dll` to `dumps\` next to it, as they are once each module unpacked itself and before anything changes them.
+1. Start the client once with only `[Logging] Enabled=1` and `[Debug] DumpModules=1` in `mods.ini` (every mod off). `version.dll` writes the images of `Game.dll`, `CrySystem.dll`, `CryFont.dll`, `XRenderD3D9.dll`, `Cry3DEngine.dll` and `CryAnimation.dll` to `dumps\` next to it, as they are once each module unpacked itself and before anything changes them.
 2. Run `modcheck <dumps folder>` with the `mods.ini` to check next to `modcheck.exe`. It installs everything as a dry run against the images, counting the changes and hooks without making them, and writes `version.log` with the same summary as a start of the client, apart from what waits for the client's window or device.
 
 `tests/modcheck46.txt`, `modcheck48.txt`, `modcheck49.txt`, `modcheck56.txt` and `modcheck58.txt` hold the summaries for 4.6, 4.8, 4.9, 5.6 and 5.8 with every mod on; a change to a search that finds another place shows as a change of its line there.

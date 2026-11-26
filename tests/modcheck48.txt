@@ -25,6 +25,7 @@
         light_rect_fix       applied            XRenderD3D9.dll+21BE0        writes 0/0, hooks 2/2, searches 1, misses 0, ambiguous 0
         general_pass_light_fix applied            XRenderD3D9.dll+822F0        writes 0/0, hooks 1/1, searches 4, misses 0, ambiguous 0
         cube_map_fov_fix     applied            XRenderD3D9.dll+1246B0       writes 0/0, hooks 1/1, searches 1, misses 0, ambiguous 0
+        flat_box_visibility_fix applied            Cry3DEngine.dll+18D2D0       writes 0/0, hooks 1/1, searches 2, misses 0, ambiguous 0
         fade_depth_write_fix applied            XRenderD3D9.dll+68BA8        writes 0/0, hooks 2/2, searches 1, misses 0, ambiguous 0
         screenshot_fix       applied            XRenderD3D9.dll+11D350       writes 0/0, hooks 2/2, searches 2, misses 0, ambiguous 0
         glyph_cells          not_applicable     -                            writes 0/0, hooks 0/0, searches 1, misses 1, ambiguous 0

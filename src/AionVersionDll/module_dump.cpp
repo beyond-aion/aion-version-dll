@@ -8,7 +8,8 @@
 // changes a module before its entry point either. The file holds the image as it lies in memory, every byte at its RVA; modcheck puts it back at the
 // same base, as the method tables and other data hold absolute addresses.
 
-static const wchar_t* const MODULES[] = { L"Game.dll", L"CrySystem.dll", L"CryFont.dll", L"XRenderD3D9.dll", L"CryAnimation.dll" };
+static const wchar_t* const MODULES[] = { L"Game.dll", L"CrySystem.dll", L"CryFont.dll", L"XRenderD3D9.dll", L"Cry3DEngine.dll",
+    L"CryAnimation.dll" };
 
 static void Dump(HMODULE module) {
     wchar_t path[MAX_PATH], name[MAX_PATH];
