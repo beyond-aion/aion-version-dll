@@ -17,8 +17,7 @@ struct Place {
 /// lea rdx, "macro_list"; ...; mov dword ptr [list+x], 1; mov r32, <slots>
 CodePatch FindMacroSlots(HMODULE game, int oldLimit) {
     static const char MACRO_LIST[] = "macro_list";
-    const void* name = FindBytes(game, MACRO_LIST, sizeof(MACRO_LIST));
-    BYTE* lookup = name ? FindLeaTo(game, name) : nullptr;
+    BYTE* lookup = FindStringLea(game, MACRO_LIST);
     for (BYTE* p = lookup; p && p < lookup + 0x50; p++) {
         if (p[0] == 0xC7 && (p[1] & 0xF8) == 0x80 && *(DWORD*)(p + 6) == 1 && (p[10] & 0xF8) == 0xB8 && *(DWORD*)(p + 11) == (DWORD)oldLimit) {
             return ExpectBytes(p + 11, sizeof(DWORD));

@@ -314,9 +314,7 @@ namespace {
 /// The renderer's screenshot names the file Screenshot\Aion%04d.jpg when it is given none.
 BYTE* LocateScreenshot(HMODULE xrender) {
     static const char NAME[] = "Screenshot\\Aion%04d.jpg";
-    const void* text = FindBytes(xrender, NAME, sizeof(NAME));
-    BYTE* lea = text ? FindLeaTo(xrender, text) : nullptr;
-    return lea ? FunctionStart(lea) : nullptr;
+    return FindFunctionByString(xrender, NAME);
 }
 
 void ApplyScreenshot(BYTE* const& function) {

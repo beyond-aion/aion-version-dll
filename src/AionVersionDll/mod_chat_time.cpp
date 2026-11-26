@@ -121,9 +121,7 @@ static __int64 __fastcall zzShowAlert(void* alerts, const wchar_t* text, __int64
 
 /// The function whose code loads the given string.
 static BYTE* FunctionUsing(HMODULE game, const char* text) {
-    const void* found = FindBytes(game, text, strlen(text) + 1);
-    BYTE* lea = found ? FindLeaTo(game, found) : nullptr;
-    return lea ? FunctionStart(lea) : nullptr;
+    return FindFunctionByString(game, text, strlen(text) + 1);
 }
 
 /// The channel function the message entry point hands channel messages over to: cmp edx, 73; ...; jge; call channel
@@ -152,8 +150,7 @@ static FilterChatText_t FindChatFilter(BYTE* channel) {
 
 /// The alert the message entry point shows GM alerts with: lea r9, [style]; ...; call
 static ShowAlert_t FindShowAlert(HMODULE game) {
-    const void* style = FindBytes(game, GM_ALERT_STYLE, sizeof(GM_ALERT_STYLE));
-    BYTE* lea = style ? FindLeaTo(game, style) : nullptr;
+    BYTE* lea = FindStringLea(game, GM_ALERT_STYLE);
     for (BYTE* p = lea; p && p < lea + 0x40; p++) {
         if (p[0] == 0xE8) {
             BYTE* target = ResolveRip(p + 1, p + 5);

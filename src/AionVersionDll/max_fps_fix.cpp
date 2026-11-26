@@ -18,11 +18,10 @@ bool IsLimit(const char* value) {
 CodePatch Locate(HMODULE game) {
     static const char NAME[] = "g_maxfps";
     static const char ZERO[] = "\0" "0";
-    const BYTE* name = FindBytes(game, NAME, sizeof(NAME));
-    BYTE* lea = name ? FindLeaTo(game, name) : nullptr;
+    BYTE* lea = FindStringLea(game, NAME);
     const BYTE* zero = FindBytes(game, ZERO, sizeof(ZERO));
     if (!lea || !zero) {
-        ModsLog("max fps fix: g_maxfps %p, its registration %p, a string \"0\" %p", name, lea, zero);
+        ModsLog("max fps fix: the registration of g_maxfps %p, a string \"0\" %p", lea, zero);
         return {};
     }
     zero++;

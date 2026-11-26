@@ -165,6 +165,7 @@ std::vector<CodePatch> FindAttackDelayIncrements(HMODULE game, const void* widge
 Place Locate(HMODULE game) {
     Place place;
     place.game = game;
+    // the widget's name is loaded in several places; the first is its lookup, the rest FindAttackDelayIncrements walks
     const void* widgetName = FindBytes(game, ATTACK_SPEED_WIDGET, sizeof(ATTACK_SPEED_WIDGET));
     BYTE* lookup = widgetName ? FindLeaTo(game, widgetName) : nullptr;
     for (BYTE* p = lookup; p && p < lookup + 0x80; p++) {
@@ -173,9 +174,7 @@ Place Locate(HMODULE game) {
             break;
         }
     }
-    const void* difference = FindBytes(game, SEPARATE_TOOLTIP_DIFFERENCE, sizeof(SEPARATE_TOOLTIP_DIFFERENCE));
-    BYTE* differenceLea = difference ? FindLeaTo(game, difference) : nullptr;
-    place.tooltip = differenceLea ? FunctionStart(differenceLea) : nullptr;
+    place.tooltip = FindFunctionByString(game, SEPARATE_TOOLTIP_DIFFERENCE);
     if (!place.value || !InModule(game, place.value, 16)) {
         return place;
     }

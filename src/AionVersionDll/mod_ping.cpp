@@ -271,9 +271,7 @@ void FindRequestBuilder(HMODULE game, Place& place) {
 
 Place Locate(HMODULE game) {
     Place place;
-    const void* resultText = FindBytes(game, PING_RESULT, sizeof(PING_RESULT));
-    BYTE* resultLea = resultText ? FindLeaTo(game, resultText) : nullptr;
-    place.response = resultLea ? FunctionStart(resultLea) : nullptr;
+    place.response = FindFunctionByString(game, PING_RESULT);
     if (place.response) {
         FindRequestBuilder(game, place);
     }

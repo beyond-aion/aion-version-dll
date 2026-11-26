@@ -13,8 +13,7 @@ struct Place {
 Place Locate(HMODULE game) {
     Place place;
     static const char RUNNING[] = "Running %d instances.";
-    const void* text = FindBytes(game, RUNNING, sizeof(RUNNING));
-    BYTE* lea = text ? FindLeaTo(game, text) : nullptr;
+    BYTE* lea = FindStringLea(game, RUNNING);
     for (BYTE* p = lea; p && p < lea + 0x30; p++) {
         if (p[0] != 0x83 || (p[1] & 0x38) != 0x38) {
             continue;

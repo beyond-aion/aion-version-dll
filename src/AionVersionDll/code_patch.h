@@ -30,6 +30,26 @@ BYTE* FindLeaTo(HMODULE module, const void* target);
 /// All RIP-relative leas (any register) that load target, in address order.
 std::vector<BYTE*> FindAllLeasTo(HMODULE module, const void* target);
 
+/// The one RIP-relative lea that loads a text: the bytes are found at their first occurrence and the lea loads them from skip on (a zero
+/// before the text keeps it from matching the end of a longer string; a length without the terminating zero lets it go on). nullptr
+/// when the text is missing or loaded from more than one place, which counts and logs as ambiguous, where FindLeaTo takes the first.
+BYTE* FindStringLea(HMODULE module, const void* bytes, size_t length, size_t skip = 0);
+
+/// The same for a string constant with its terminating zero.
+template <typename Char, size_t N>
+BYTE* FindStringLea(HMODULE module, const Char (&text)[N]) {
+    return FindStringLea(module, text, sizeof(text));
+}
+
+/// The function whose code loads the text, from one place or several in it; nullptr, counted and logged as ambiguous, when several
+/// functions load it.
+BYTE* FindFunctionByString(HMODULE module, const void* bytes, size_t length, size_t skip = 0);
+
+template <typename Char, size_t N>
+BYTE* FindFunctionByString(HMODULE module, const Char (&text)[N]) {
+    return FindFunctionByString(module, text, sizeof(text));
+}
+
 /// Finds a direct call (E8 rel32) to target.
 BYTE* FindCallTo(HMODULE module, const void* target);
 

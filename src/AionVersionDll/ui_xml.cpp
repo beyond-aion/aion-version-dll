@@ -658,9 +658,7 @@ Place Locate(HMODULE game) {
     Place place;
     // followed by a line break in 5.x clients
     static const char CANNOT_OPEN[] = "can not open file %s";
-    const void* message = FindBytes(game, CANNOT_OPEN, sizeof(CANNOT_OPEN) - 1);
-    BYTE* reference = message ? FindLeaTo(game, message) : nullptr;
-    BYTE* loader = reference ? FunctionStart(reference) : nullptr;
+    BYTE* loader = FindFunctionByString(game, CANNOT_OPEN, sizeof(CANNOT_OPEN) - 1);
     place.loader = loader;
     // the checks and calls below sit in chained ranges after the primary one
     BYTE* end = loader ? FunctionBodyEnd(loader, 0x1000) : nullptr;

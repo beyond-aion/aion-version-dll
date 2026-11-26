@@ -1111,10 +1111,8 @@ struct BuffCountPlace {
 /// 5.x: shows up to MAX_EFFECTS buffs and as many debuffs in the own windows and the target window.
 static void LocateBuffCount5(HMODULE game, BYTE* buffVtable, BYTE* debuffVtable, BYTE* targetVtable, BYTE* init, BuffCountPlace& place) {
     BuffCount& found = place.found;
-    BYTE* buffName = FindBytes(game, "\0buff_item%d", 13);
-    BYTE* debuffName = FindBytes(game, "\0debuff_item%d", 15);
-    BYTE* buffLea = buffName ? FindLeaTo(game, buffName + 1) : nullptr;
-    BYTE* debuffLea = debuffName ? FindLeaTo(game, debuffName + 1) : nullptr;
+    BYTE* buffLea = FindStringLea(game, "\0buff_item%d", 13, 1);
+    BYTE* debuffLea = FindStringLea(game, "\0debuff_item%d", 15, 1);
     for (int kind = 0; kind < 2; kind++) {
         BYTE* nameLea = kind == 0 ? buffLea : debuffLea;
         for (BYTE* p = nameLea ? nameLea - 0x30 : nullptr; p && p < nameLea; p++) {
@@ -1225,8 +1223,7 @@ static void LocateBuffCount(HMODULE game, BYTE* targetVtable, BuffCountPlace& pl
     BYTE* buffVtable = FindVtable(game, ".?AVDlgBuffStatus@@");
     BYTE* debuffVtable = FindVtable(game, ".?AVDlgDebuffStatus@@");
     // with the zero before it, as "debuff_item%d" ends the same way
-    BYTE* slotName = FindBytes(game, "\0buff_item%d", 13);
-    BYTE* slotNameLea = slotName ? FindLeaTo(game, slotName + 1) : nullptr;
+    BYTE* slotNameLea = FindStringLea(game, "\0buff_item%d", 13, 1);
     BYTE* init = slotNameLea ? FunctionStart(slotNameLea) : nullptr;
     if (!buffVtable || !debuffVtable || !targetVtable || !init) {
         ModsLog("buffs: windows or init not found");
@@ -1318,8 +1315,7 @@ void InstallBuffLimit(HMODULE game) {
 /// How many slots of each kind the client fills in its buff windows: 40 in 5.x, whose loop ends in cmp reg, 40; jl right after
 /// the slot name, 24 in 4.x.
 static int ClientSlots(HMODULE game) {
-    BYTE* slotName = FindBytes(game, "\0buff_item%d", 13);
-    BYTE* lea = slotName ? FindLeaTo(game, slotName + 1) : nullptr;
+    BYTE* lea = FindStringLea(game, "\0buff_item%d", 13, 1);
     for (BYTE* p = lea; p && p < lea + 0x80; p++) {
         BYTE* cmp = p[0] == 0x41 ? p + 1 : p;
         if (cmp[0] == 0x83 && (cmp[1] & 0xF8) == 0xF8 && cmp[3] == 0x7C && cmp[2] > CLIENT_EFFECTS && cmp[2] <= MAX_EFFECTS) {

@@ -396,9 +396,7 @@ void FindMarkerFunction(HMODULE game, Place& place) {
         place.effectNative = true;
         return;
     }
-    const void* name = FindBytes(game, FIRST_MARKER_EFFECT, sizeof(FIRST_MARKER_EFFECT));
-    BYTE* nameLea = name ? FindLeaTo(game, name) : nullptr;
-    BYTE* function = nameLea ? FunctionStart(nameLea) : nullptr;
+    BYTE* function = FindFunctionByString(game, FIRST_MARKER_EFFECT);
     for (BYTE* p = function; p && p < function + 0x800 && !place.markerLookup; p++) {
         if (memcmp(p, "\x48\x8D\x05", 3) == 0 && memcmp(p + 7, "\x48\x8D\x14\x8F\x48\x8B\x8B", 7) == 0 && memcmp(p + 18, "\x48\x8B\x14\xD0\xE8", 5) == 0) {
             place.markerLookup = p;

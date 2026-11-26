@@ -236,7 +236,16 @@ BYTE* FindLeaTo(HMODULE module, const void* target) {
     return result;
 }
 
-std::vector<BYTE*> FindAllLeasTo(HMODULE module, const void* target) {
+/// The text a search looked for, for the log: up to 60 printable characters, narrow or wide.
+static void TextForLog(const BYTE* text, char (&out)[64]) {
+    size_t step = text[0] && !text[1] ? 2 : 1, n = 0;
+    for (; n < 60 && text[n * step] >= 0x20 && text[n * step] < 0x7F; n++) {
+        out[n] = (char)text[n * step];
+    }
+    out[n] = 0;
+}
+
+static std::vector<BYTE*> LeasTo(HMODULE module, const void* target) {
     std::vector<BYTE*> found;
     ForEachMatch(module, true, 7, LEA, RIP_OPERAND, [&](BYTE* c) {
         if ((c[0] == 0x48 || c[0] == 0x4C) && (c[2] & 0xC7) == 0x05 && ResolveRip(c + 3, c + 7) == target) {
@@ -244,8 +253,52 @@ std::vector<BYTE*> FindAllLeasTo(HMODULE module, const void* target) {
         }
         return false;
     }, target, 3);
+    return found;
+}
+
+std::vector<BYTE*> FindAllLeasTo(HMODULE module, const void* target) {
+    std::vector<BYTE*> found = LeasTo(module, target);
     ReportSearch(found.empty() ? 0 : 1);
     return found;
+}
+
+BYTE* FindStringLea(HMODULE module, const void* bytes, size_t length, size_t skip) {
+    BYTE* text = FindBytes(module, bytes, length);
+    if (!text) {
+        return nullptr;
+    }
+    std::vector<BYTE*> found = LeasTo(module, text + skip);
+    ReportSearch(found.size());
+    if (found.size() > 1) {
+        char shown[64];
+        TextForLog(text + skip, shown);
+        MODULE_LOG("text loaded from %zu places: %s", found.size(), shown);
+    }
+    return found.size() == 1 ? found[0] : nullptr;
+}
+
+BYTE* FindFunctionByString(HMODULE module, const void* bytes, size_t length, size_t skip) {
+    BYTE* text = FindBytes(module, bytes, length);
+    if (!text) {
+        return nullptr;
+    }
+    // a function that names itself in several of its messages loads the text more than once: all must be in it
+    BYTE* function = nullptr;
+    size_t functions = 0;
+    for (BYTE* lea : LeasTo(module, text + skip)) {
+        BYTE* start = FunctionStart(lea);
+        if (start != function) {
+            function = start;
+            functions++;
+        }
+    }
+    ReportSearch(functions);
+    if (functions > 1) {
+        char shown[64];
+        TextForLog(text + skip, shown);
+        MODULE_LOG("text loaded from %zu functions: %s", functions, shown);
+    }
+    return functions == 1 ? function : nullptr;
 }
 
 BYTE* FindCallTo(HMODULE module, const void* target) {

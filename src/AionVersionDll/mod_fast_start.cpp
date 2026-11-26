@@ -42,8 +42,7 @@ static DWORD WINAPI zzGetTickCount() {
 
 static BYTE* LocateUnloadWait(HMODULE exe) {
     static const char NAME[] = "AionUnloadMutex";
-    const void* text = FindBytes(exe, NAME, sizeof(NAME));
-    BYTE* lea = text ? FindLeaTo(exe, text) : nullptr;
+    BYTE* lea = FindStringLea(exe, NAME);
     if (!lea) {
         return nullptr;
     }
@@ -682,6 +681,7 @@ static bool Calls(BYTE* function, BYTE* target) {
 
 /// The function that names itself in its messages.
 static BYTE* NamedFunction(HMODULE module, const char* name) {
+    // the first function that loads the name: in 4.8 and 4.9 "ZipDir::CacheFactory::Seek" is loaded by two
     const void* text = FindBytes(module, name, strlen(name) + 1);
     BYTE* lea = text ? FindLeaTo(module, text) : nullptr;
     return lea ? FunctionStart(lea) : nullptr;
@@ -1449,9 +1449,7 @@ static void __fastcall zzHeapReport(HANDLE heap, HANDLE file, char flag, const c
 /// lea rdx, "\t+ LBlock %03d : %p ~ %p (%d k)" in the report function
 static void FindHeapReport(HMODULE game, FastLoadPlace& place) {
     static const char LINE[] = "\t+ LBlock %03d : %p ~ %p (%d k)";
-    const void* text = FindBytes(game, LINE, sizeof(LINE));
-    BYTE* lea = text ? FindLeaTo(game, text) : nullptr;
-    place.heapReport = lea ? FunctionStart(lea) : nullptr;
+    place.heapReport = FindFunctionByString(game, LINE);
 }
 
 static void ApplyHeapReport(const FastLoadPlace& place) {
@@ -1635,9 +1633,10 @@ static int __fastcall zzXmlToken(const wchar_t* name) {
 }
 
 /// push rsi; sub rsp, 20h; mov rsi, rcx; test rcx, rcx; jnz ...; ...; lea rbx, <tokens>; lea rbp, <end>; loop: mov rdx, [rbx];
-/// mov rcx, rsi; call [_wcsicmp]; ...; the report of an unknown token is the only use of its text
+/// mov rcx, rsi; call [_wcsicmp]; ...; the report of an unknown token uses its text (5.x: only there)
 static void FindXmlTokens(HMODULE game, FastLoadPlace& place) {
     static const wchar_t TEXT[] = L"%s, XML_GetToken() : undefined token \"%s\"";
+    // the first function that loads the text, checked below: 4.x clients load it in three
     const void* text = FindBytes(game, TEXT, sizeof(TEXT));
     BYTE* lea = text ? FindLeaTo(game, text) : nullptr;
     BYTE* p = lea ? FunctionStart(lea) : nullptr;
