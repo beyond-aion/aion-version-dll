@@ -78,16 +78,9 @@ static void RaiseBound(HMODULE crySystem, const char* name, DWORD lower, DWORD u
     MODULE_LOG("fullscreen fix: %s bound at %p, %lu -> %lu", name, bound, upper, MAX_SIZE);
 }
 
-#if defined(_M_AMD64)
-void KeepGraphicsSettings(HMODULE crySystem); // graphics_settings_fix.cpp
-#endif
-
-static void OnCrySystem(HMODULE crySystem) {
+static void RaiseBounds(HMODULE crySystem) {
     RaiseBound(crySystem, "width", 800, 2560);
     RaiseBound(crySystem, "height", 600, 1920);
-#if defined(_M_AMD64)
-    KeepGraphicsSettings(crySystem);
-#endif
 }
 
 /// Without a DPI awareness of its own the client sees a screen scaled above 100 % as smaller than it is, renders that size and Windows
@@ -105,5 +98,5 @@ static void MakeDpiAware() {
 /// off by the stretch. CrySystem.dll is packed in some clients, so the bounds are raised once its entry point has unpacked it.
 void InstallFullscreenFix() {
     MakeDpiAware();
-    OnModuleLoad(L"CrySystem.dll", OnCrySystem, true);
+    OnModuleLoad(L"CrySystem.dll", RaiseBounds, true);
 }
