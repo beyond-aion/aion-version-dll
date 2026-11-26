@@ -100,6 +100,8 @@ static const CLSID CLSID_DXDIAG_PROVIDER = { 0xA65B8071, 0x3BFE, 0x4213, { 0x9A,
 static decltype(CoCreateInstance)* real_CoCreateInstance = nullptr;
 static decltype(RegSetValueExA)* real_RegSetValueExA = nullptr;
 static std::atomic<bool> s_dxDiagSkipped = false;
+static bool s_textComparesFound = false;
+static bool FindTextCompares(HMODULE exe);
 
 /// The client collects a DirectX diagnostic report at every start, which takes about 3 seconds, only to store it in the registry
 /// (HKCU\Software\Aion\Client\SystemInfo). Without the provider it skips the report and keeps the values stored before.
@@ -110,6 +112,11 @@ static HRESULT WINAPI zzCoCreateInstance(REFCLSID clsid, LPUNKNOWN outer, DWORD 
         }
         s_dxDiagSkipped = true;
         ModsLog("fast start: DxDiag skipped");
+        // the comparison of the hardware comes next; some clients unpack aion.bin only after the mods are installed
+        if (!s_textComparesFound) {
+            InstallScope scope("fast_start");
+            s_textComparesFound = FindTextCompares(ClientModule());
+        }
         return REGDB_E_CLASSNOTREG;
     }
     return real_CoCreateInstance(clsid, outer, context, iid, object);
@@ -149,6 +156,126 @@ static LSTATUS WINAPI zzRegSetValueExA(HKEY key, LPCSTR name, DWORD reserved, DW
         return real_RegSetValueExA(key, name, reserved, type, (const BYTE*)&memory, sizeof(memory));
     }
     return real_RegSetValueExA(key, name, reserved, type, data, size);
+}
+
+// At every start aion.bin compares the hardware with what it stored in SystemInfo at an earlier start: the vendor of the graphics card,
+// then two texts of the report. When one differs it sets change_hardware, and CrySystem resets the graphics settings to its preset.
+// Without the report a text is empty, and the client never stores an empty text, so the stored one stays and differs at every start.
+// The two calls that compare the texts now go through a check where an empty text counts as the stored one; a text that is there is
+// compared as before, and so is the vendor. Found by crlfrancis (pull request 10). The place, after the lea of "Display0.video_vendor_id"
+// in the function that compares (4.6 to 5.8 alike, CrySystem holds a copy the client does not call):
+//   lea rdx, [rsp+30h] (the stored text); mov rcx, rbx or rdi (the one of this start); call _stricmp     twice, to the same function
+// Once both have been made, they call the client's function directly again, as aion.bin checks its own code.
+
+typedef int(__cdecl* CompareText_t)(const char* current, const char* stored);
+
+namespace {
+
+struct TextCompares {
+    CodePatch calls[2];
+    BYTE* compare = nullptr;
+};
+
+TextCompares s_textCompares;
+CompareText_t s_compareText = nullptr;
+std::atomic<int> s_textCompared = 0;
+
+int __cdecl zzCompareText(const char* current, const char* stored) {
+    if (!*current) {
+        ModsLog("fast start: empty hardware text taken as the stored one");
+    }
+    int result = *current ? s_compareText(current, stored) : 0;
+    if (++s_textCompared == 2) {
+        for (const CodePatch& call : s_textCompares.calls) {
+            PatchMemory(call.at, call.expected, call.size);
+        }
+    }
+    return result;
+}
+
+TextCompares LocateTextCompares(HMODULE exe) {
+    static const char VENDOR[] = "Display0.video_vendor_id";
+    static const BYTE LOAD_TEXTS[] = { 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x8B };
+    TextCompares found;
+    BYTE* vendor = FindBytes(exe, VENDOR, sizeof(VENDOR));
+    if (!vendor) {
+        return found;
+    }
+    // the vendor's name is loaded where the client reads, stores and compares the hardware; only the comparison has the two calls
+    std::vector<BYTE*> calls;
+    size_t functions = 0;
+    for (BYTE* lea : FindAllLeasTo(exe, vendor)) {
+        std::vector<BYTE*> here;
+        for (BYTE* p = lea; p < lea + 0x180 && InModule(exe, p, 13); p++) {
+            if (memcmp(p, LOAD_TEXTS, sizeof(LOAD_TEXTS)) == 0 && (p[7] == 0xCB || p[7] == 0xCF) && p[8] == 0xE8) {
+                here.push_back(p + 8);
+            }
+        }
+        if (!here.empty()) {
+            functions++;
+            calls = here;
+        }
+    }
+    ReportSearch(functions);
+    if (functions != 1 || calls.size() != 2) {
+        ModsLog("fast start: hardware comparison not found (%zu functions, %zu calls)", functions, calls.size());
+        return found;
+    }
+    BYTE* compare = ResolveRip(calls[0] + 1, calls[0] + 5);
+    if (ResolveRip(calls[1] + 1, calls[1] + 5) != compare || !InModule(exe, compare, 1)) {
+        ModsLog("fast start: hardware comparison calls two functions");
+        return found;
+    }
+    found.calls[0] = ExpectBytes(calls[0] + 1, sizeof(INT32));
+    found.calls[1] = ExpectBytes(calls[1] + 1, sizeof(INT32));
+    found.compare = compare;
+    return found;
+}
+
+void ApplyTextCompares(const TextCompares& found) {
+    if (!found.compare) {
+        return;
+    }
+    // jmp [rip+0]; dq zzCompareText, within reach of the calls
+    static const BYTE JUMP[] = { 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00 };
+    DWORD size = 0;
+    BYTE* jump = (BYTE*)DetourAllocateRegionWithinJumpBounds(found.calls[0].at, &size);
+    INT64 distances[2] = {};
+    for (int i = 0; i < 2 && jump; i++) {
+        distances[i] = jump - (found.calls[i].at + 4);
+        if (distances[i] != (INT32)distances[i]) {
+            jump = nullptr;
+        }
+    }
+    if (!jump || size < sizeof(JUMP) + sizeof(void*)) {
+        ModsLog("fast start: no memory near the hardware comparison");
+        ReportStatus(InstallStatus::PatchFailed);
+        return;
+    }
+    void* target = (void*)zzCompareText;
+    memcpy(jump, JUMP, sizeof(JUMP));
+    memcpy(jump + sizeof(JUMP), &target, sizeof(target));
+    FlushInstructionCache(GetCurrentProcess(), jump, sizeof(JUMP) + sizeof(target));
+    s_compareText = (CompareText_t)found.compare;
+    s_textCompares = found;
+    for (int i = 0; i < 2; i++) {
+        INT32 distance = (INT32)distances[i];
+        ApplyPatch(found.calls[i], &distance);
+    }
+    ModsLog("fast start: hardware comparison at %p and %p", found.calls[0].at - 1, found.calls[1].at - 1);
+}
+
+} // namespace
+
+/// Searches aion.bin for the comparison, if the code is there yet.
+static bool FindTextCompares(HMODULE exe) {
+    TextCompares found;
+    {
+        LocatePhase phase;
+        found = LocateTextCompares(exe);
+    }
+    ApplyTextCompares(found);
+    return found.compare != nullptr;
 }
 
 
@@ -485,6 +612,7 @@ void InstallFastStart() {
     if (real_RegSetValueExA) {
         AttachHook(&(PVOID&)real_RegSetValueExA, zzRegSetValueExA);
     }
+    s_textComparesFound = FindTextCompares(ClientModule());
     OnModuleLoad(L"CrySystem.dll", FastStartOnCrySystem, true);
     HMODULE d3dx = GetModuleHandleW(L"d3dx9_38.dll");
     if (!d3dx) {
