@@ -6,7 +6,6 @@
 #include <detours/detours.h>
 #include "install_report.h"
 #include "module_load.h"
-#include "mods.h"
 
 #pragma warning(disable: 28159)
 
@@ -88,7 +87,7 @@ static void ReadBallistic(int pointerSpeed) {
     int accel[3] = {};
     SystemParametersInfoW(SPI_GETMOUSE, 0, accel, 0);
     double x[5], y[5];
-    s_ballistic = accel[2] && g_modsConfig.cameraAcceleration && ReadSmoothCurve(L"SmoothMouseXCurve", x)
+    s_ballistic = accel[2] && ReadSmoothCurve(L"SmoothMouseXCurve", x)
         && ReadSmoothCurve(L"SmoothMouseYCurve", y);
     if (!s_ballistic) {
         if (!s_ballisticLogged) {

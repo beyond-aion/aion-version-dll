@@ -24,7 +24,7 @@ The DLL automatically applies fixes for the following problems:
 
 - the camera no longer stutters or hangs when moving it via the mouse on Windows 10 (since version 1709) and 11
 - camera movement is no longer blocked when using screen capture software such as Bandicam
-- the camera follows the Windows pointer acceleration curve ("Enhance pointer precision") as the client does without this DLL; `[Camera] Acceleration=0` turns with the mouse counts alone
+- the camera follows the Windows "Enhance pointer precision" setting, as in the original client
 </details>
 
 <details>

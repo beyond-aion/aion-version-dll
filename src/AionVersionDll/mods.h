@@ -33,7 +33,6 @@ struct ModsConfig {
     bool mimalloc;
     int animationLod; // meters, 0 = off
     bool plainSystemCfg;
-    bool cameraAcceleration;
 };
 
 enum { FAST_START_OFF, FAST_START_SHOW_LOGO, FAST_START_FULL };

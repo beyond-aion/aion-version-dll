@@ -59,7 +59,6 @@ static const Setting SETTINGS[] = {
     { L"UiScale", L"Fit", Setting::Bool, &g_modsConfig.uiScaleFit, 0 },
     { L"UiScale", L"LargeGlyphFrom", Setting::Int, &g_modsConfig.largeGlyphFrom, CLIENT_LARGE_GLYPH_FROM, 8, 64 },
     { L"SystemCfg", L"PlainText", Setting::Bool, &g_modsConfig.plainSystemCfg, 0 },
-    { L"Camera", L"Acceleration", Setting::Bool, &g_modsConfig.cameraAcceleration, 1 },
 };
 
 static void LoadConfig() {
