@@ -15,8 +15,6 @@ typedef __int64(__fastcall* LoadConfig_t)(void* system, void* path, __int64 inve
 typedef __int64(__fastcall* SaveConfig_t)(void* system, void* a2, void* a3, void* a4);
 static LoadConfig_t real_LoadConfig = nullptr;
 static SaveConfig_t real_SaveConfig = nullptr;
-// whether the file was read as plain text, so that it is saved as such
-static bool s_plainText = false;
 
 /// A line of settings in plain text has its = sign, an inverted one the inverted sign.
 static bool IsInverted(const std::string& line) {
@@ -91,15 +89,14 @@ static __int64 __fastcall zzLoadConfig(void* system, void* path, __int64 inverte
         for (const std::string& line : lines) {
             plain += IsPlainSetting(line);
         }
-        int converted = 0;
-        bool written = plain && WritePlainText(lines, converted);
-        if (plain && (written || plain > converted)) {
-            s_plainText = true;
-            inverted = 0;
-        }
         if (plain) {
+            int converted = 0;
+            bool written = WritePlainText(lines, converted);
+            if (written || plain > converted) {
+                inverted = 0;
+            }
             ModsLog("system cfg: %d settings in plain text, %d inverted ones %s", plain, converted,
-                written ? "turned into plain text" : s_plainText ? "left out, as the file is read-only" : "read, as the file is read-only");
+                written ? "turned into plain text" : !inverted ? "left out, as the file is read-only" : "read, as the file is read-only");
         }
     }
     return real_LoadConfig(system, path, inverted, a4, a5);
@@ -109,7 +106,7 @@ static __int64 __fastcall zzSaveConfig(void* system, void* a2, void* a3, void* a
     __int64 result = real_SaveConfig(system, a2, a3, a4);
     std::vector<std::string> lines;
     int inverted = 0;
-    if (s_plainText && ReadLines(lines)) {
+    if (ReadLines(lines)) {
         WritePlainText(lines, inverted);
     }
     return result;
