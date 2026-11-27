@@ -362,8 +362,10 @@ DWORD WINAPI NormalStopWatch(LPVOID) {
     return 0;
 }
 
-/// Deletes the dumps in Data\Dump when the game data changed since they were written. Returns the number of deleted dumps.
-int DropStaleDumps() {
+/// A failed invalidation must leave the stamp out of date so the next client retries it.
+enum class DumpState { Current, Invalidated, Unavailable };
+
+DumpState PrepareDumps() {
     std::wstring root = ClientRoot();
     unsigned long long hash = 0xCBF29CE484222325ull;
     int count = 0;
@@ -381,27 +383,62 @@ int DropStaleDumps() {
         CloseHandle(file);
     }
     if (strcmp(old, stamp) == 0) {
-        return 0;
+        return DumpState::Current;
     }
+
     int deleted = 0;
+    bool cleared = true;
     WIN32_FIND_DATAW found;
     HANDLE search = FindFirstFileW((dump + L"\\*.dat").c_str(), &found);
     if (search != INVALID_HANDLE_VALUE) {
         do {
-            deleted += DeleteFileW((dump + L"\\" + found.cFileName).c_str()) ? 1 : 0;
+            if (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                continue;
+            }
+            if (DeleteFileW((dump + L"\\" + found.cFileName).c_str())) {
+                deleted++;
+            } else {
+                DWORD error = GetLastError();
+                if (error != ERROR_FILE_NOT_FOUND) {
+                    ModsLog("table dump: could not delete %ls (error %lu)", found.cFileName, error);
+                    cleared = false;
+                }
+            }
         } while (FindNextFileW(search, &found));
+        DWORD error = GetLastError();
         FindClose(search);
+        if (error != ERROR_NO_MORE_FILES) {
+            ModsLog("table dump: could not finish listing %ls (error %lu)", dump.c_str(), error);
+            cleared = false;
+        }
+    } else {
+        DWORD error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
+            ModsLog("table dump: could not list %ls (error %lu)", dump.c_str(), error);
+            cleared = false;
+        }
     }
+    if (!cleared) {
+        return DumpState::Unavailable;
+    }
+
     CreateDirectoryW(dump.c_str(), nullptr);
     file = CreateFileW(stampFile.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
-    if (file != INVALID_HANDLE_VALUE) {
-        DWORD written = 0;
-        WriteFile(file, stamp, (DWORD)strlen(stamp), &written, nullptr);
-        CloseHandle(file);
+    if (file == INVALID_HANDLE_VALUE) {
+        ModsLog("table dump: could not open %ls for writing (error %lu)", stampFile.c_str(), GetLastError());
+        return DumpState::Unavailable;
     }
-    ModsLog("table dump: %d .pak files changed since the dumps were written (stamp %s, was %s), %d dumps deleted", count, stamp, old[0] ? old : "none",
-        deleted);
-    return deleted;
+    DWORD written = 0;
+    DWORD size = (DWORD)strlen(stamp);
+    BOOL saved = WriteFile(file, stamp, size, &written, nullptr);
+    DWORD error = saved ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(file);
+    if (!saved || written != size) {
+        ModsLog("table dump: could not write %ls (%lu/%lu bytes, error %lu)", stampFile.c_str(), written, size, error);
+        return DumpState::Unavailable;
+    }
+    ModsLog("table dump: %d .pak files (stamp %s, was %s), %d stale dumps deleted", count, stamp, old[0] ? old : "none", deleted);
+    return DumpState::Invalidated;
 }
 
 void Apply(const DumpPlaces& places) {
@@ -420,9 +457,13 @@ void Apply(const DumpPlaces& places) {
         s_flagsIni = FourXIniPath();
         s_digitFlags = false;
         // read the flag before the client's own start writes it: true here means the dumps of the last run are complete
-        trusted = ReadNormalStop();
-        int deleted = DropStaleDumps();
-        trusted = trusted && deleted == 0;
+        DumpState state = PrepareDumps();
+        if (state == DumpState::Unavailable) {
+            ModsLog("table dump: using the original table loader because the cache could not be prepared");
+            ReportStatus(InstallStatus::PatchFailed);
+            return;
+        }
+        trusted = state == DumpState::Current && ReadNormalStop();
         s_dumpActive = true;
     }
     static const auto HOOKS = MakeHooks(std::make_integer_sequence<int, MAX_METHODS>());
@@ -447,8 +488,13 @@ void Apply(const DumpPlaces& places) {
 } // namespace
 
 void InstallTableDump(HMODULE game) {
-    LocateThenApply(game, Locate, Apply);
-    if (g_dryRun) {
+    DumpPlaces places;
+    {
+        LocatePhase phase;
+        places = Locate(game);
+    }
+    Apply(places);
+    if (g_dryRun || places.hasDumps) {
         return;
     }
     // 4.x went through Apply above; 5.x keeps its tables in data\dump\tables.dmp and has its own flags ini
