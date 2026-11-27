@@ -20,9 +20,14 @@
 
 namespace {
 
+struct PakAccess {
+    void** system = nullptr;
+    size_t getPakSlot = 0;
+};
+
 struct DumpPlaces {
     CodePatch flag;            // the developer flag, CXGame+0x53C0 in 4.8 (4.6 +0x44B8, 4.9 +0x5488)
-    void** system = nullptr;   // where the game keeps ISystem*
+    PakAccess pak;
     std::vector<void*> methods; // the dump writers and readers (vt[3], vt[4]) of the tables that have a dump file
     std::vector<bool> isWriter; // whether the method at the same index is a writer (vt[3]) or a reader (vt[4])
     bool hasDumps = false;      // 5.x clients have none, they keep their tables in tables.dmp by themselves
@@ -62,20 +67,55 @@ DWORD FindFlagOffset(HMODULE game) {
     return 0;
 }
 
-/// mov rcx, [system]; ... mov rax, [rcx]; call [rax+190h] (ISystem::GetIPak) in a dump method.
-void** FindSystem(BYTE* method) {
-    static const BYTE GET_PAK[] = { 0x48, 0x8B, 0x01, 0xFF, 0x90, 0x90, 0x01, 0x00, 0x00 };
-    for (BYTE* p = method; p < method + 0x800; p++) {
-        if (p[0] != 0x48 || p[1] != 0x8B || p[2] != 0x0D) {
-            continue;
-        }
-        for (BYTE* q = p + 7; q < p + 40; q++) {
-            if (memcmp(q, GET_PAK, sizeof(GET_PAK)) == 0) {
-                return (void**)ResolveRip(p + 3, p + 7);
-            }
+/// A static image can leave the table object in zero-initialized storage. Its constructor loads the vtable into rax and stores it there.
+void** FindTableVtable(HMODULE game, BYTE* table) {
+    void** vtable = *(void***)table;
+    if (InModule(game, vtable, 5 * sizeof(void*))) {
+        return vtable;
+    }
+    if (!g_dryRun) {
+        return nullptr;
+    }
+    BYTE* store = FindRipReference(game, "48 89 05", 7, table);
+    BYTE* start = store ? FunctionStart(store) : nullptr;
+    if (!start) {
+        return nullptr;
+    }
+    BYTE* begin = max(start, store - 0x28);
+    for (BYTE* next = store; next >= begin + 7; next--) {
+        BYTE* lea = next - 7;
+        if (lea[0] == 0x48 && lea[1] == 0x8D && lea[2] == 0x05) {
+            vtable = (void**)ResolveRip(lea + 3, next);
+            return InModule(game, vtable, 5 * sizeof(void*)) ? vtable : nullptr;
         }
     }
     return nullptr;
+}
+
+/// mov rcx, [system]; ... mov rax, [rcx]; call [rax+slot] (ISystem::GetIPak) in a dump method.
+PakAccess FindPakAccess(HMODULE game, BYTE* method) {
+    static constexpr BYTE GET_PAK[] = { 0x48, 0x8B, 0x01, 0xFF, 0x90 };
+    BYTE* end = FunctionEnd(method);
+    if (!end) {
+        return {};
+    }
+    for (BYTE* p = method; p + 7 < end && p < method + 0x800; p++) {
+        if (p[0] != 0x48 || p[1] != 0x8B || p[2] != 0x0D) {
+            continue;
+        }
+        for (BYTE* q = p + 7; q < p + 40 && q + sizeof(GET_PAK) + sizeof(DWORD) <= end; q++) {
+            if (memcmp(q, GET_PAK, sizeof(GET_PAK)) != 0) {
+                continue;
+            }
+            DWORD offset;
+            memcpy(&offset, q + sizeof(GET_PAK), sizeof(offset));
+            auto system = (void**)ResolveRip(p + 3, p + 7);
+            if ((offset == 0x190 || offset == 0x1A8) && InModule(game, system, sizeof(void*))) {
+                return { system, offset / sizeof(void*) };
+            }
+        }
+    }
+    return {};
 }
 
 DumpPlaces Locate(HMODULE game) {
@@ -107,8 +147,8 @@ DumpPlaces Locate(HMODULE game) {
         if (!InModule(game, table, sizeof(void*))) {
             continue;
         }
-        void** vtable = *(void***)table;
-        if (!InModule(game, vtable, 5 * sizeof(void*))) {
+        void** vtable = FindTableVtable(game, table);
+        if (!vtable) {
             continue;
         }
         for (int slot : { 3, 4 }) {
@@ -118,11 +158,11 @@ DumpPlaces Locate(HMODULE game) {
                 places.isWriter.push_back(slot == 3);
             }
         }
-        if (!places.system) {
-            places.system = FindSystem((BYTE*)vtable[3]);
+        if (!places.pak.system && InModule(game, vtable[3], 1)) {
+            places.pak = FindPakAccess(game, (BYTE*)vtable[3]);
         }
     }
-    if (!places.methods.empty() && places.system) {
+    if (!places.methods.empty() && places.pak.system) {
         static const BYTE ON = 1;
         places.flag = PlanPatch(gameObject + flag, &ON, 1);
     }
@@ -132,7 +172,7 @@ DumpPlaces Locate(HMODULE game) {
 typedef __int64(__fastcall* DumpMethod_t)(__int64 table, const char* file);
 typedef void*(__fastcall* FOpen_t)(void* pak, const char* name, const char* mode, unsigned flags);
 
-void** s_system;
+PakAccess s_pak;
 FOpen_t real_FOpen;
 int s_retries;
 
@@ -153,14 +193,14 @@ void* __fastcall zzFOpen(void* pak, const char* name, const char* mode, unsigned
     return file;
 }
 
-/// Puts the retrying FOpen into the vtable of CryPak (ISystem::GetIPak at vt+400, ICryPak::FOpen at vt+120) for the time of a dump method.
+/// Puts the retrying FOpen into the vtable of CryPak for the time of a dump method.
 void HookPak(bool on) {
-    void* system = *s_system;
+    void* system = *s_pak.system;
     if (!system) {
         return;
     }
     typedef void*(__fastcall* GetIPak_t)(void*);
-    void* pak = (*(GetIPak_t**)system)[400 / 8](system);
+    void* pak = (*(GetIPak_t**)system)[s_pak.getPakSlot](system);
     if (!pak) {
         return;
     }
@@ -183,7 +223,7 @@ DumpMethod_t s_real[MAX_METHODS];
 
 bool s_dumpActive = false;
 std::atomic<bool> s_writerSeen = false;
-bool s_trusted = false;     // the dumps of the last run were complete, so NormalStop goes back to true right after the client clears it
+std::atomic<bool> s_trusted = false;     // the dumps of the last run were complete, so NormalStop goes back to true right after the client clears it
 SRWLOCK s_flagLock = SRWLOCK_INIT; // the game thread (writers) and the watch thread both write NormalStop
 bool s_isWriter[MAX_METHODS] = {};
 std::wstring s_flagsIni;   // Data\Dump\TableDump.ini in 4.x, data\dump\config.ini in 5.x
@@ -198,7 +238,7 @@ __int64 __fastcall zzDumpMethod(__int64 table, const char* file) {
     HookPak(true);
     __int64 result = s_real[N](table, file);
     HookPak(false);
-    ModsLog("table dump: %s %s", file ? file : "?", result ? "done" : "failed");
+    ModsLog("table dump: %s %s %s", s_isWriter[N] ? "write" : "read", file ? file : "?", result ? "done" : "failed");
     return result;
 }
 
@@ -448,7 +488,7 @@ void Apply(const DumpPlaces& places) {
         return;
     }
     if (!places.flag) {
-        ModsLog("table dump: not found (system %p, %zu dump methods)", places.system, places.methods.size());
+        ModsLog("table dump: not found (system %p, %zu dump methods)", places.pak.system, places.methods.size());
         ReportStatus(InstallStatus::NotFound);
         return;
     }
@@ -467,7 +507,7 @@ void Apply(const DumpPlaces& places) {
         s_dumpActive = true;
     }
     static const auto HOOKS = MakeHooks(std::make_integer_sequence<int, MAX_METHODS>());
-    s_system = places.system;
+    s_pak = places.pak;
     size_t count = min(places.methods.size(), (size_t)MAX_METHODS);
     for (size_t i = 0; i < count; i++) {
         s_real[i] = (DumpMethod_t)places.methods[i];
@@ -475,8 +515,9 @@ void Apply(const DumpPlaces& places) {
         AttachHook(&(PVOID&)s_real[i], HOOKS[i]);
     }
     bool ok = ApplyPatch(places.flag);
-    ModsLog("table dump: flag at %p, ISystem at %p, %zu dump methods%s", places.flag.at, places.system, count, ok ? "" : ", flag not set");
-    if (s_dumpActive) {
+    ModsLog("table dump: flag at %p, ISystem at %p (GetIPak +%zX), %zu dump methods%s", places.flag.at, places.pak.system,
+        places.pak.getPakSlot * sizeof(void*), count, ok ? "" : ", flag not set");
+    if (s_dumpActive && ok) {
         s_trusted = trusted;
         CreateThread(nullptr, 0, NormalStopWatch, nullptr, 0, nullptr);
         if (trusted) {
@@ -486,6 +527,10 @@ void Apply(const DumpPlaces& places) {
 }
 
 } // namespace
+
+bool CanReuseLegacyTableDumps() {
+    return s_trusted && !s_digitFlags && !s_writerSeen;
+}
 
 void InstallTableDump(HMODULE game) {
     DumpPlaces places;

@@ -98,6 +98,7 @@ void InstallMoveReports(HMODULE game);
 void InstallOthersSnap(HMODULE game);
 /// Loads the largest tables of 4.x clients from the dumps the client keeps in Data/Dump.
 void InstallTableDump(HMODULE game);
+bool CanReuseLegacyTableDumps();
 void InstallUiScale(HMODULE game);
 void InstallMultiClient(HMODULE game);
 void InstallSkipAgreement(HMODULE game);

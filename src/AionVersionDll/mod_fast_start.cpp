@@ -324,12 +324,55 @@ static void KeepShaderCache() {
     }
 }
 
-static bool IsNormalStop(const char* key) {
-    return key && _stricmp(key, "NormalStop") == 0;
+enum class NormalStopValue { Unchanged, Numeric, Text };
+
+template <class Char, size_t N>
+static bool MatchesDumpIni(const Char* file, const Char (&suffix)[N]) {
+    if (!file) {
+        return false;
+    }
+    size_t length = std::char_traits<Char>::length(file);
+    if (length < N - 1) {
+        return false;
+    }
+    const Char* tail = file + length - (N - 1);
+    if (tail != file && tail[-1] != '/' && tail[-1] != '\\') {
+        return false;
+    }
+    for (size_t i = 0; i < N - 1; i++) {
+        Char c = tail[i];
+        if (c >= 'A' && c <= 'Z') {
+            c += 'a' - 'A';
+        }
+        if ((c == '\\' ? '/' : c) != suffix[i]) {
+            return false;
+        }
+    }
+    return true;
 }
 
-static bool IsNormalStop(const wchar_t* key) {
-    return key && _wcsicmp(key, L"NormalStop") == 0;
+static NormalStopValue GetNormalStopValue(LPCSTR app, LPCSTR key, LPCSTR file) {
+    if (app && key && _stricmp(app, "Game") == 0 && _stricmp(key, "NormalStop") == 0) {
+        if (MatchesDumpIni(file, "data/dump/config.ini")) {
+            return NormalStopValue::Numeric;
+        }
+        if (MatchesDumpIni(file, "data/dump/tabledump.ini") && CanReuseLegacyTableDumps()) {
+            return NormalStopValue::Text;
+        }
+    }
+    return NormalStopValue::Unchanged;
+}
+
+static NormalStopValue GetNormalStopValue(LPCWSTR app, LPCWSTR key, LPCWSTR file) {
+    if (app && key && _wcsicmp(app, L"Game") == 0 && _wcsicmp(key, L"NormalStop") == 0) {
+        if (MatchesDumpIni(file, L"data/dump/config.ini")) {
+            return NormalStopValue::Numeric;
+        }
+        if (MatchesDumpIni(file, L"data/dump/tabledump.ini") && CanReuseLegacyTableDumps()) {
+            return NormalStopValue::Text;
+        }
+    }
+    return NormalStopValue::Unchanged;
 }
 
 static decltype(GetPrivateProfileIntA)* real_GetPrivateProfileIntA = GetPrivateProfileIntA;
@@ -338,7 +381,7 @@ static decltype(GetPrivateProfileStringA)* real_GetPrivateProfileStringA = GetPr
 static decltype(GetPrivateProfileStringW)* real_GetPrivateProfileStringW = GetPrivateProfileStringW;
 
 static UINT WINAPI zzGetPrivateProfileIntA(LPCSTR app, LPCSTR key, INT fallback, LPCSTR file) {
-    if (IsNormalStop(key)) {
+    if (GetNormalStopValue(app, key, file) == NormalStopValue::Numeric) {
         ModsLog("fast start: NormalStop read as 1");
         return 1;
     }
@@ -346,27 +389,35 @@ static UINT WINAPI zzGetPrivateProfileIntA(LPCSTR app, LPCSTR key, INT fallback,
 }
 
 static UINT WINAPI zzGetPrivateProfileIntW(LPCWSTR app, LPCWSTR key, INT fallback, LPCWSTR file) {
-    if (IsNormalStop(key)) {
+    if (GetNormalStopValue(app, key, file) == NormalStopValue::Numeric) {
         ModsLog("fast start: NormalStop read as 1");
         return 1;
     }
     return real_GetPrivateProfileIntW(app, key, fallback, file);
 }
 
+template <class Char>
+static DWORD CopyNormalStopValue(NormalStopValue value, Char* out, DWORD size, const Char* text, const Char* numeric) {
+    const Char* source = value == NormalStopValue::Text ? text : numeric;
+    DWORD count = min(size - 1, (DWORD)std::char_traits<Char>::length(source));
+    std::char_traits<Char>::copy(out, source, count);
+    out[count] = 0;
+    ModsLog("fast start: NormalStop read as %s", value == NormalStopValue::Text ? "true" : "1");
+    return count;
+}
+
 static DWORD WINAPI zzGetPrivateProfileStringA(LPCSTR app, LPCSTR key, LPCSTR fallback, LPSTR out, DWORD size, LPCSTR file) {
-    if (IsNormalStop(key) && out && size >= 2) {
-        ModsLog("fast start: NormalStop read as 1");
-        strcpy_s(out, size, "1");
-        return 1;
+    NormalStopValue value = GetNormalStopValue(app, key, file);
+    if (value != NormalStopValue::Unchanged && out && size) {
+        return CopyNormalStopValue(value, out, size, "true", "1");
     }
     return real_GetPrivateProfileStringA(app, key, fallback, out, size, file);
 }
 
 static DWORD WINAPI zzGetPrivateProfileStringW(LPCWSTR app, LPCWSTR key, LPCWSTR fallback, LPWSTR out, DWORD size, LPCWSTR file) {
-    if (IsNormalStop(key) && out && size >= 2) {
-        ModsLog("fast start: NormalStop read as 1");
-        wcscpy_s(out, size, L"1");
-        return 1;
+    NormalStopValue value = GetNormalStopValue(app, key, file);
+    if (value != NormalStopValue::Unchanged && out && size) {
+        return CopyNormalStopValue(value, out, size, L"true", L"1");
     }
     return real_GetPrivateProfileStringW(app, key, fallback, out, size, file);
 }
