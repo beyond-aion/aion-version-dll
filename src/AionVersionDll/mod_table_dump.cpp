@@ -67,14 +67,12 @@ DWORD FindFlagOffset(HMODULE game) {
     return 0;
 }
 
-/// A static image can leave the table object in zero-initialized storage. Its constructor loads the vtable into rax and stores it there.
+/// The table object can still be zero-initialized storage when Game.dll is patched (4.9): its constructor has not run yet. The constructor
+/// loads the vtable into rax and stores it there, and the vtable itself is static, so its methods can be hooked before the object exists.
 void** FindTableVtable(HMODULE game, BYTE* table) {
     void** vtable = *(void***)table;
     if (InModule(game, vtable, 5 * sizeof(void*))) {
         return vtable;
-    }
-    if (!g_dryRun) {
-        return nullptr;
     }
     BYTE* store = FindRipReference(game, "48 89 05", 7, table);
     BYTE* start = store ? FunctionStart(store) : nullptr;
