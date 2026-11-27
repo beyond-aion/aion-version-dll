@@ -56,8 +56,8 @@ The DLL automatically applies fixes for the following problems:
 <details>
 <summary><b>PrintScreen</b></summary>
 
-- the `Print Screen` key no longer opens the Snipping Tool over the game's own screenshot, and puts that screenshot on the clipboard
-- taking a screenshot no longer freezes the game: the picture is encoded and written in the background
+- the `Print Screen` key no longer opens the Snipping Tool over the game's own screenshot and copies the game window to the clipboard
+- screenshots use a directory listing to find a free file name, which avoids a long pause on slow disks with many existing screenshots
 </details>
 
 <details>
