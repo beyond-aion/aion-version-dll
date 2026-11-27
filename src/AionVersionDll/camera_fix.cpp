@@ -184,7 +184,12 @@ static WPARAM MakeMouseMoveWParam() {
 
 static void StartTurning(int x, int y) {
     POINT cursor;
-    real_GetCursorPos(&cursor);
+    // without the real position (another desktop, such as the UAC prompt, has the input) the cursor is left free rather than pinned
+    // to garbage
+    bool known = real_GetCursorPos(&cursor) != FALSE;
+    if (!known) {
+        cursor = { x, y };
+    }
     int speed = 10;
     SystemParametersInfoW(SPI_GETMOUSESPEED, 0, &speed, 0);
     speed = max(1, min(20, speed));
@@ -193,9 +198,12 @@ static void StartTurning(int x, int y) {
     s_restX = s_restY = 0;
     s_virtual = { x, y };
     s_movePending = false;
-    GetClipCursor(&s_previousClip);
+    // an empty rectangle stands for an area that could not be read, which the end of the turn then lifts instead of restoring
+    if (!GetClipCursor(&s_previousClip)) {
+        SetRectEmpty(&s_previousClip);
+    }
     RECT pin = { cursor.x, cursor.y, cursor.x + 1, cursor.y + 1 };
-    s_clipped = ClipCursor(&pin) != FALSE;
+    s_clipped = known && ClipCursor(&pin) != FALSE;
     s_pinned = cursor;
     s_releasedMidTurn = false;
     s_deadZone = false;
@@ -209,7 +217,7 @@ static void StopTurning() {
         RECT screen = { GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN) };
         screen.right = screen.left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
         screen.bottom = screen.top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
-        ClipCursor(EqualRect(&screen, &s_previousClip) ? nullptr : &s_previousClip);
+        ClipCursor(IsRectEmpty(&s_previousClip) || EqualRect(&screen, &s_previousClip) ? nullptr : &s_previousClip);
         s_clipped = false;
     }
 }
