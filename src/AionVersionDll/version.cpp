@@ -93,6 +93,8 @@ void InstallColorTagFix(HMODULE game);
 void InstallServerCheckFix(HMODULE game);
 void InstallPetDecorationFix(HMODULE game);
 void InstallMaxFpsFix(HMODULE game);
+void SetDxvkFrameLimitModule(HMODULE d3d9);
+void InstallDxvkFrameLimit(HMODULE game);
 void InstallLightRectFixOnLoad();
 void InstallGeneralPassLightFixOnLoad();
 void InstallCubeMapFovFixOnLoad();
@@ -106,6 +108,7 @@ static const InstallEntry GAME_FIXES[] = {
     { "server_check_fix", nullptr, InstallServerCheckFix },
     { "pet_decoration_fix", nullptr, InstallPetDecorationFix },
     { "max_fps_fix", nullptr, InstallMaxFpsFix },
+    { "dxvk_frame_limit", nullptr, InstallDxvkFrameLimit },
 };
 
 static void InstallGameFixes(HMODULE game) {
@@ -136,7 +139,7 @@ static void PreloadDXVK() {
     bool dxvk = true;
     ReadSetting({ L"Graphics", L"DXVK", Setting::Bool, &dxvk, 1 });
     if (dxvk) {
-        LoadLibrary(L"d3d9.dll");
+        SetDxvkFrameLimitModule(LoadLibrary(L"d3d9.dll"));
         return;
     }
     wchar_t path[MAX_PATH];

@@ -38,7 +38,7 @@ The DLL automatically applies fixes for the following problems:
 - no walls that go dark and back with a slight turn of the camera, as at the Gelkmaros fortress, when using the High Quality engine
 - no straight seams in the sky that water and other shiny surfaces reflect
 - no pale straight-edged slabs that come and go on the water of ponds lit from below, as in Cygnea, Kaldor and Enshar
-- the frame rate is no longer capped at 60 (120 in 5.x clients) by default; a `g_maxfps` set in `system.cfg` still applies
+- the frame rate is no longer capped at 60 (120 in 5.x clients) by default; a `g_maxfps` set in `system.cfg` still applies unless the loaded DXVK has a frame rate limit set in `dxvk.conf`. DXVK then controls the frame rate while the value of `g_maxfps` is preserved.
 </details>
 
 <details>
