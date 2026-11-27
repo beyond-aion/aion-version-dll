@@ -83,9 +83,9 @@ static void ShortenClockMeasure(HMODULE crySystem) {
     LocateThenApply(crySystem, LocateClockMeasure, ApplyClockMeasure);
 }
 
-// 4.x clients keep much of their game data in memory as zlib blocks of 16 KB, which CrySystem compresses with the zlib 1.1.4 it
-// carries while the data loads (a sixth of the loading time) and decompresses when it is used; 5.x clients, with zlib 1.2.8, do the
-// same when they build their table dump. libdeflate does both several times
+// 4.x clients keep much of their game data in memory as zlib blocks of 16 KB, which CrySystem compresses with the zlib it carries
+// (1.1.4 up to 4.8, 1.2.8 in 4.9) while the data loads (a sixth of the loading time) and decompresses when it is used; 5.x clients,
+// with zlib 1.2.8, do the same when they build their table dump. libdeflate does both several times
 // faster; its blocks are plain zlib streams the client's own code reads as well. Whatever libdeflate cannot do (a block that does not
 // fit, data it rejects) goes to the client's zlib, which then gives its own result.
 
@@ -132,8 +132,8 @@ static int __cdecl zz_uncompress(BYTE* dest, unsigned long* destLen, const BYTE*
     return 0;
 }
 
-/// compress2 and uncompress of zlib 1.1.4 as the 4.x clients build them, both starting by filling a z_stream on the stack and then
-/// passing the version "1.1.4" to the init function: ...; lea r8/rdx, "1.1.4"
+/// compress2 and uncompress fill a z_stream on the stack and then pass the version of the zlib they carry to its init function:
+/// ...; lea r8/rdx, "1.1.4" or "1.2.8"
 static BYTE* FindZlibFunction(HMODULE crySystem, const char* pattern, const void* version) {
     BYTE* function = FindPattern(crySystem, pattern);
     return function && ResolveRip(function + strlen(pattern) / 3 + 1, function + strlen(pattern) / 3 + 5) == version ? function : nullptr;
@@ -149,16 +149,32 @@ static ZlibPlace LocateZlib(HMODULE crySystem) {
     ZlibPlace place;
     BYTE*& compress = place.compress;
     BYTE*& uncompress = place.uncompress;
-    if (const void* version = FindBytes(crySystem, VERSION4, sizeof(VERSION4))) {
-        compress = FindZlibFunction(crySystem, "4C 8B DC 48 81 EC 98 00 00 00 8B 02 4D 89 43 88 45 89 4B 90 49 89 4B 98 89 44 24 38 33 C0 49 89 "
-            "7B F0 48 8B FA 8B 94 24 C0 00 00 00 44 8D 48 58 4C 8D 05", version);
-        uncompress = FindZlibFunction(crySystem, "4C 8B DC 48 81 EC 88 00 00 00 8B 02 4D 89 43 98 49 89 4B A8 45 89 4B A0 89 44 24 38 33 C0 49 89 "
-            "7B 20 48 8B FA 49 8D 4B 98 44 8D 40 58 48 8D 15", version);
-    } else if (const void* version = FindBytes(crySystem, VERSION5, sizeof(VERSION5))) {
-        compress = FindZlibFunction(crySystem, "4C 8B DC 57 48 81 EC 80 00 00 00 8B 02 4D 89 43 98 45 89 4B A0 49 89 4B A8 89 44 24 38 33 C0 48 8B "
-            "FA 8B 94 24 B0 00 00 00 4C 8D 05", version);
-        uncompress = FindZlibFunction(crySystem, "40 57 48 81 EC 80 00 00 00 8B 02 48 8B FA 4C 89 44 24 20 89 44 24 38 33 C0 48 89 4C 24 30 48 8D 15",
-            version);
+    const void* version4 = FindBytes(crySystem, VERSION4, sizeof(VERSION4));
+    const void* version5 = FindBytes(crySystem, VERSION5, sizeof(VERSION5));
+    // The 4.x clients shape compress2 and uncompress the same way from 4.6 through 4.9: 4.9 only carries a newer zlib and names
+    // it to the init call, so the 4.x pattern is tried against either version string. A 5.x client builds the functions another way.
+    for (const void* version : { version4, version5 }) {
+        if (!version) {
+            continue;
+        }
+        if (!compress) {
+            compress = FindZlibFunction(crySystem, "4C 8B DC 48 81 EC 98 00 00 00 8B 02 4D 89 43 88 45 89 4B 90 49 89 4B 98 89 44 24 38 33 C0 49 89 "
+                "7B F0 48 8B FA 8B 94 24 C0 00 00 00 44 8D 48 58 4C 8D 05", version);
+        }
+        if (!uncompress) {
+            uncompress = FindZlibFunction(crySystem, "4C 8B DC 48 81 EC 88 00 00 00 8B 02 4D 89 43 98 49 89 4B A8 45 89 4B A0 89 44 24 38 33 C0 49 89 "
+                "7B 20 48 8B FA 49 8D 4B 98 44 8D 40 58 48 8D 15", version);
+        }
+    }
+    if (version5 && (!compress || !uncompress)) {
+        if (!compress) {
+            compress = FindZlibFunction(crySystem, "4C 8B DC 57 48 81 EC 80 00 00 00 8B 02 4D 89 43 98 45 89 4B A0 49 89 4B A8 89 44 24 38 33 C0 48 8B "
+                "FA 8B 94 24 B0 00 00 00 4C 8D 05", version5);
+        }
+        if (!uncompress) {
+            uncompress = FindZlibFunction(crySystem, "40 57 48 81 EC 80 00 00 00 8B 02 48 8B FA 4C 89 44 24 20 89 44 24 38 33 C0 48 89 4C 24 30 48 8D 15",
+                version5);
+        }
     }
     return place;
 }
@@ -274,12 +290,21 @@ static InflatePlace LocateRawInflate(HMODULE crySystem) {
     static const char VERSION4[] = "1.1.4", VERSION5[] = "1.2.8";
     const void* version4 = FindBytes(crySystem, VERSION4, sizeof(VERSION4));
     const void* version5 = FindBytes(crySystem, VERSION5, sizeof(VERSION5));
-    BYTE* inflate4 = version4 ? FindZlibFunction(crySystem, "4C 8B DC 48 81 EC 98 00 00 00 8B 84 24 C0 00 00 00 4D 89 4B 88 41 B9 58 00 00 00 89 44 24 "
-        "28 41 8B 00 49 89 53 98 89 44 24 38 48 8D 05 ?? ?? ?? ?? 49 89 7B F0 49 89 43 B8 49 8B F8 49 89 4B C8 48 8D 05 ?? ?? ?? ?? 4C 8D 05", version4) : nullptr;
-    BYTE* inflate5 = version5 ? FindZlibFunction(crySystem, "4C 8B DC 49 89 5B 10 56 48 81 EC 80 00 00 00 8B 84 24 B0 00 00 00 4D 89 4B 98 41 B9 58 00 00 "
-        "00 89 44 24 28 48 8D 42 0C 49 8B F0 49 89 43 A8 8B 42 08 48 8B DA 89 44 24 38 48 8D 05 ?? ?? ?? ?? 49 89 4B D8 49 89 43 C8 48 8D 05 ?? ?? ?? ?? 4C "
-        "8D 05", version5) : nullptr;
-    return { inflate4, inflate5 };
+    InflatePlace place;
+    // The pak inflate keeps the 4.x shape through 4.9, which carries zlib 1.2.8 like 5.x, so the 4.x pattern is tried against
+    // either version string; a 5.x client builds the function another way.
+    for (const void* version : { version4, version5 }) {
+        if (version && !place.inflate4) {
+            place.inflate4 = FindZlibFunction(crySystem, "4C 8B DC 48 81 EC 98 00 00 00 8B 84 24 C0 00 00 00 4D 89 4B 88 41 B9 58 00 00 00 89 44 24 "
+                "28 41 8B 00 49 89 53 98 89 44 24 38 48 8D 05 ?? ?? ?? ?? 49 89 7B F0 49 89 43 B8 49 8B F8 49 89 4B C8 48 8D 05 ?? ?? ?? ?? 4C 8D 05", version);
+        }
+    }
+    if (version5 && !place.inflate4) {
+        place.inflate5 = FindZlibFunction(crySystem, "4C 8B DC 49 89 5B 10 56 48 81 EC 80 00 00 00 8B 84 24 B0 00 00 00 4D 89 4B 98 41 B9 58 00 00 "
+            "00 89 44 24 28 48 8D 42 0C 49 8B F0 49 89 43 A8 8B 42 08 48 8B DA 89 44 24 38 48 8D 05 ?? ?? ?? ?? 49 89 4B D8 49 89 43 C8 48 8D 05 ?? "
+            "?? ?? ?? 4C 8D 05", version5);
+    }
+    return place;
 }
 
 static void ApplyRawInflate(const InflatePlace& place) {
