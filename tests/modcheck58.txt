@@ -38,6 +38,7 @@
         server_check_fix     applied            Game.dll+7BB124              writes 1/1, hooks 0/0, searches 1, misses 0, ambiguous 0
         pet_decoration_fix   not_applicable     -                            writes 0/0, hooks 0/0, searches 3, misses 2, ambiguous 0
         max_fps_fix          applied            Game.dll+452C8               writes 1/1, hooks 0/0, searches 3, misses 0, ambiguous 0
+        dxvk_frame_limit     applied            Game.dll+8EDB4               writes 1/1, hooks 0/0, searches 4, misses 0, ambiguous 0
         game_state           unchanged          -                            writes 0/0, hooks 0/0, searches 1, misses 0, ambiguous 0
         chat_time            not_applicable     -                            writes 0/0, hooks 0/0, searches 1, misses 0, ambiguous 0
         anti_afk             applied            Game.dll+FC4244              writes 1/1, hooks 0/0, searches 1, misses 0, ambiguous 0
