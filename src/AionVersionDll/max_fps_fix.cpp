@@ -106,15 +106,7 @@ int DetectDxvkFrameLimit() {
     free(path);
     DxvkRates rates;
     ReadDxvkRates(config, '\n', exe, rates);
-    if (!HasFrameLimit(rates.Effective(supportsGlobal))) {
-        return 0;
-    }
-
-    // An older DXVK can let this environment variable control its limiter independently of the file.
-    if (GetEnvironmentVariableA(LEGACY_RATE_ENV, nullptr, 0)
-        && FindBytes(s_dxvkD3d9, LEGACY_RATE_ENV, sizeof(LEGACY_RATE_ENV))) {
-        return 0;
-    }
+    // DXVK applies the options of this environment variable over the file, so a limit can come from either of them.
     char* overrides = nullptr;
     _dupenv_s(&overrides, nullptr, "DXVK_CONFIG");
     if (overrides) {
@@ -122,7 +114,17 @@ int DetectDxvkFrameLimit() {
         free(overrides);
         ReadDxvkRates(stream, ';', exe, rates);
     }
-    return rates.Effective(supportsGlobal);
+    int rate = rates.Effective(supportsGlobal);
+    if (!HasFrameLimit(rate)) {
+        return 0;
+    }
+
+    // An older DXVK can let this environment variable control its limiter independently of the configuration.
+    if (GetEnvironmentVariableA(LEGACY_RATE_ENV, nullptr, 0)
+        && FindBytes(s_dxvkD3d9, LEGACY_RATE_ENV, sizeof(LEGACY_RATE_ENV))) {
+        return 0;
+    }
+    return rate;
 }
 
 /// A frame rate of two or three digits, as the default string of the cvar.

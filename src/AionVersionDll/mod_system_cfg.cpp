@@ -95,8 +95,12 @@ static __int64 __fastcall zzLoadConfig(void* system, void* path, __int64 inverte
             if (written || plain > converted) {
                 inverted = 0;
             }
-            ModsLog("system cfg: %d settings in plain text, %d inverted ones %s", plain, converted,
-                written ? "turned into plain text" : !inverted ? "left out, as the file is read-only" : "read, as the file is read-only");
+            if (!converted) {
+                ModsLog("system cfg: %d settings in plain text", plain);
+            } else {
+                ModsLog("system cfg: %d settings in plain text, %d inverted ones %s", plain, converted,
+                    written ? "turned into plain text" : !inverted ? "left out, as the file is read-only" : "read, as the file is read-only");
+            }
         }
     }
     return real_LoadConfig(system, path, inverted, a4, a5);
