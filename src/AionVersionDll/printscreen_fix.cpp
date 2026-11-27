@@ -3,9 +3,12 @@
 // With the Windows 11 setting "Use the Print screen key to open screen capture", PrintScreen opens the Snipping Tool over the client on top
 // of the client's own screenshot. Windows leaves the key alone while a program holds it as a hot key, so the client window holds it while it
 // is in the foreground, and gets the hot key as the key up it takes its screenshots on. The hot key also keeps Windows from copying the screen
-// to the clipboard, so the fix copies the client area there itself.
+// to the clipboard, so the fix puts the screenshot there itself, or else copies the client area.
 
 static const int HOT_KEY_ID = 0x5C01;
+
+/// From the screenshot fix: whether it takes over the next screenshot and puts that picture on the clipboard.
+bool CopyNextScreenshot();
 static HWND s_holder;
 static HWND s_refused; // another program already holds the key
 
@@ -70,7 +73,8 @@ bool TranslatePrintScreen(MSG* msg, bool removed) {
         return true;
     }
     if (msg->message == WM_HOTKEY && msg->wParam == HOT_KEY_ID) {
-        if (removed) {
+        // the picture of the screenshot itself, when the screenshot fix can give it; otherwise the screen as it is now
+        if (removed && !CopyNextScreenshot()) {
             CopyToClipboard(s_holder);
         }
         msg->message = WM_KEYUP;

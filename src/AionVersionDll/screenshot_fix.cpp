@@ -14,8 +14,12 @@
 
 #pragma comment(lib, "windowscodecs.lib")
 
-// Listing the directory avoids a separate open for each existing screenshot on a cold disk. Publish a finished image before
-// returning: the renderer uses the save result immediately and reports the name it passed in.
+// The renderer takes a screenshot in the frame: it opens Screenshot\Aion0000.jpg, Aion0001.jpg and so on until one is missing, which with
+// many screenshots on a cold hard disk takes seconds, then has D3DX read the back buffer and encode it as JPEG, about 200 ms at 3840x2160,
+// and only then lets the game announce it. Here the name comes from one listing of the folder, the frame only copies the image, and a
+// thread of its own encodes and writes it, under a temporary name until it is complete, so that the game never lists half a file.
+// Whatever cannot be done so (another format of the back buffer, a failing call) is left to D3DX as before.
+
 typedef __int64(__fastcall* Screenshot_t)(void* renderer, char* name, unsigned char customize);
 typedef HRESULT(WINAPI* SaveSurface_t)(const char* file, int format, IDirect3DSurface9* surface, const PALETTEENTRY* palette, const RECT* rect);
 
@@ -24,7 +28,13 @@ static SaveSurface_t real_SaveSurface = nullptr;
 static constexpr int D3DXIFF_JPG = 1;
 static constexpr float JPEG_QUALITY = 0.9f;
 
-static thread_local const char* s_screenshotFile = nullptr;
+// set while the renderer takes a screenshot with a name from here, so that its save is the one to take over
+static bool s_ownName = false;
+// set by the PrintScreen fix for the next screenshot, whose picture goes on the clipboard too
+static bool s_copyNext = false;
+// the numbers taken in each folder (screenshots, character customisation), listed once
+static std::set<int> s_taken[2];
+static bool s_listed[2];
 
 static const char* const FOLDERS[] = { "Screenshot", "ScreenshotCustomize" };
 static const char* const PREFIXES[] = { "Aion", "AionCustomize" };
@@ -41,73 +51,111 @@ static double MillisSince(LONGLONG start) {
     return (Now() - start) * 1000.0 / frequency.QuadPart;
 }
 
-/// Claims the lowest free number before the renderer uses it. The sidecar disappears when the handle closes, even if the client exits.
-static HANDLE ClaimName(bool customize, char* name, size_t size) {
+/// The lowest number not taken in the folder, as the renderer would find it, from one listing of the folder.
+static bool NextName(bool customize, char* name, size_t size) {
     int kind = customize ? 1 : 0;
     if (!CreateDirectoryA(FOLDERS[kind], nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
-        return nullptr;
+        return false;
     }
-    std::set<int> taken;
-    char pattern[MAX_PATH];
-    sprintf_s(pattern, "%s\\%s*.jpg", FOLDERS[kind], PREFIXES[kind]);
-    _finddata_t found;
-    intptr_t search = _findfirst(pattern, &found);
-    size_t prefix = strlen(PREFIXES[kind]);
-    if (search != -1) {
-        do {
+    if (!s_listed[kind]) {
+        s_listed[kind] = true;
+        char pattern[MAX_PATH];
+        sprintf_s(pattern, "%s\\%s*.jpg", FOLDERS[kind], PREFIXES[kind]);
+        _finddata_t found;
+        intptr_t search = _findfirst(pattern, &found);
+        size_t prefix = strlen(PREFIXES[kind]);
+        for (bool more = search != -1; more; more = _findnext(search, &found) == 0) {
             int number;
             char rest[8];
             if (sscanf_s(found.name + prefix, "%4d%7s", &number, rest, (unsigned)sizeof(rest)) == 2 && _stricmp(rest, ".jpg") == 0) {
-                taken.insert(number);
+                s_taken[kind].insert(number);
             }
-        } while (_findnext(search, &found) == 0);
-        _findclose(search);
+        }
+        if (search != -1) {
+            _findclose(search);
+        }
     }
     for (int number = 0; number < 10000; number++) {
-        if (taken.count(number) != 0) {
-            continue;
+        if (s_taken[kind].insert(number).second) {
+            sprintf_s(name, size, "%s\\%s%04d.jpg", FOLDERS[kind], PREFIXES[kind], number);
+            return true;
         }
-        sprintf_s(name, size, "%s\\%s%04d.jpg", FOLDERS[kind], PREFIXES[kind], number);
-        std::string lock = std::string(name) + ".lock";
-        HANDLE claim = CreateFileA(lock.c_str(), DELETE, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
-        if (claim == INVALID_HANDLE_VALUE) {
-            DWORD error = GetLastError();
-            if (error == ERROR_SHARING_VIOLATION || (error == ERROR_ACCESS_DENIED && GetFileAttributesA(lock.c_str()) != INVALID_FILE_ATTRIBUTES)) {
-                continue;
-            }
-            return nullptr;
-        }
-        if (GetFileAttributesA(name) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND) {
-            return claim;
-        }
-        CloseHandle(claim);
     }
-    return nullptr;
+    return false;
 }
 
 static __int64 __fastcall zzScreenshot(void* renderer, char* name, unsigned char customize) {
     char own[MAX_PATH];
-    std::unique_ptr<void, decltype(&CloseHandle)> claim(name ? nullptr : ClaimName(customize != 0, own, sizeof(own)), CloseHandle);
-    if (!claim) {
+    if (name || !NextName(customize != 0, own, sizeof(own))) {
         return real_Screenshot(renderer, name, customize);
     }
     LONGLONG started = Now();
-    const char* previous = s_screenshotFile;
-    s_screenshotFile = own;
+    s_ownName = true;
     __int64 result = real_Screenshot(renderer, own, customize);
-    s_screenshotFile = previous;
+    s_ownName = false;
     ModsLog("screenshot: %s, %.1f ms in the frame", own, MillisSince(started));
     return result;
 }
 
-struct ScreenshotImage {
+/// An image copied from the back buffer, rows of 32-bit pixels, to encode on a thread of its own.
+struct ScreenshotJob {
+    std::string file;
     UINT width;
     UINT height;
     std::vector<BYTE> pixels;
+    bool clipboard = false;
 };
 
+/// Puts the picture on the clipboard as a bottom-up DIB of 24-bit pixels: the fourth byte of the back buffer is no alpha, and programs that
+/// read 32-bit pixels as such would show it transparent.
+static bool CopyToClipboard(const ScreenshotJob& job) {
+    size_t stride = ((size_t)job.width * 3 + 3) & ~(size_t)3;
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, sizeof(BITMAPINFOHEADER) + stride * job.height);
+    BITMAPINFOHEADER* header = memory ? (BITMAPINFOHEADER*)GlobalLock(memory) : nullptr;
+    if (!header) {
+        if (memory) {
+            GlobalFree(memory);
+        }
+        return false;
+    }
+    *header = {};
+    header->biSize = sizeof(BITMAPINFOHEADER);
+    header->biWidth = (LONG)job.width;
+    header->biHeight = (LONG)job.height;
+    header->biPlanes = 1;
+    header->biBitCount = 24;
+    header->biCompression = BI_RGB;
+    header->biSizeImage = (DWORD)(stride * job.height);
+    BYTE* rows = (BYTE*)(header + 1);
+    for (UINT row = 0; row < job.height; row++) {
+        const BYTE* source = job.pixels.data() + (size_t)(job.height - 1 - row) * job.width * 4;
+        BYTE* target = rows + row * stride;
+        for (UINT x = 0; x < job.width; x++) {
+            target[x * 3] = source[x * 4];
+            target[x * 3 + 1] = source[x * 4 + 1];
+            target[x * 3 + 2] = source[x * 4 + 2];
+        }
+    }
+    GlobalUnlock(memory);
+    // a clipboard opened without a window has no owner after EmptyClipboard, and SetClipboardData may then fail: a message-only window
+    // of this thread owns it, and the data stays on the clipboard when the window goes
+    bool copied = false;
+    HWND owner = CreateWindowExW(0, L"STATIC", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
+    if (owner && OpenClipboard(owner)) {
+        copied = EmptyClipboard() && SetClipboardData(CF_DIB, memory) != nullptr;
+        CloseClipboard();
+    }
+    if (owner) {
+        DestroyWindow(owner);
+    }
+    if (!copied) {
+        GlobalFree(memory);
+    }
+    return copied;
+}
+
 /// Encodes the image as JPEG with WIC and writes it under a temporary name, renamed once complete.
-static bool WriteJpeg(const ScreenshotImage& image, const std::string& temporary) {
+static bool WriteJpeg(const ScreenshotJob& job, const std::string& temporary) {
     IWICImagingFactory* factory = nullptr;
     IWICStream* stream = nullptr;
     IWICBitmapEncoder* encoder = nullptr;
@@ -126,21 +174,21 @@ static bool WriteJpeg(const ScreenshotImage& image, const std::string& temporary
         value.fltVal = JPEG_QUALITY;
         options->Write(1, &option, &value);
         WICPixelFormatGUID format = GUID_WICPixelFormat24bppBGR;
-        ok = SUCCEEDED(frame->Initialize(options)) && SUCCEEDED(frame->SetSize(image.width, image.height))
+        ok = SUCCEEDED(frame->Initialize(options)) && SUCCEEDED(frame->SetSize(job.width, job.height))
             && SUCCEEDED(frame->SetPixelFormat(&format)) && IsEqualGUID(format, GUID_WICPixelFormat24bppBGR);
     }
     // the JPEG encoder takes 24-bit pixels: the fourth byte of each goes, a band of rows at a time
     static constexpr UINT BAND = 64;
-    std::vector<BYTE> band(ok ? (size_t)image.width * 3 * BAND : 0);
-    for (UINT row = 0; ok && row < image.height; row += BAND) {
-        UINT rows = min(BAND, image.height - row);
-        const BYTE* source = image.pixels.data() + (size_t)row * image.width * 4;
-        for (size_t i = 0, count = (size_t)rows * image.width; i < count; i++) {
+    std::vector<BYTE> band(ok ? (size_t)job.width * 3 * BAND : 0);
+    for (UINT row = 0; ok && row < job.height; row += BAND) {
+        UINT rows = min(BAND, job.height - row);
+        const BYTE* source = job.pixels.data() + (size_t)row * job.width * 4;
+        for (size_t i = 0, count = (size_t)rows * job.width; i < count; i++) {
             band[i * 3] = source[i * 4];
             band[i * 3 + 1] = source[i * 4 + 1];
             band[i * 3 + 2] = source[i * 4 + 2];
         }
-        ok = SUCCEEDED(frame->WritePixels(rows, image.width * 3, image.width * 3 * rows, band.data()));
+        ok = SUCCEEDED(frame->WritePixels(rows, job.width * 3, job.width * 3 * rows, band.data()));
     }
     ok = ok && SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit());
     for (IUnknown* object : std::initializer_list<IUnknown*>{ options, frame, encoder, stream, factory }) {
@@ -151,8 +199,52 @@ static bool WriteJpeg(const ScreenshotImage& image, const std::string& temporary
     return ok;
 }
 
+/// Renames the finished file to its name, never over another file: a second client in the same folder lists it on its own and can take the
+/// same number. Then the file takes the next free one, and file says which.
+static bool Publish(const std::string& temporary, std::string& file) {
+    if (MoveFileExA(temporary.c_str(), file.c_str(), 0)) {
+        return true;
+    }
+    size_t digits = file.size() - 8;  // ...Aion0042.jpg
+    int number = atoi(file.c_str() + digits);
+    for (int next = number + 1; next < 10000 && GetLastError() == ERROR_ALREADY_EXISTS; next++) {
+        char name[8];
+        sprintf_s(name, "%04d", next);
+        std::string other = file.substr(0, digits) + name + ".jpg";
+        if (MoveFileExA(temporary.c_str(), other.c_str(), 0)) {
+            ModsLog("screenshot: %s was taken by another client, written as %s", file.c_str(), other.c_str());
+            file = other;
+            return true;
+        }
+    }
+    return false;
+}
+
+static DWORD WINAPI WriteScreenshot(LPVOID parameter) {
+    std::unique_ptr<ScreenshotJob> job((ScreenshotJob*)parameter);
+    LONGLONG started = Now();
+    HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    char suffix[24];
+    sprintf_s(suffix, ".%lu.part", GetCurrentProcessId());
+    std::string temporary = job->file + suffix;
+    bool ok = WriteJpeg(*job, temporary) && Publish(temporary, job->file);
+    if (!ok) {
+        DeleteFileA(temporary.c_str());
+    }
+    bool copied = job->clipboard && CopyToClipboard(*job);
+    if (job->clipboard && !copied) {
+        ModsLog("screenshot: %s could not be put on the clipboard (error %lu)", job->file.c_str(), GetLastError());
+    }
+    if (SUCCEEDED(com)) {
+        CoUninitialize();
+    }
+    ModsLog("screenshot: %s %s%s in %.0f ms", job->file.c_str(), ok ? "written" : "could not be written", copied ? " and put on the clipboard" : "",
+        MillisSince(started));
+    return 0;
+}
+
 /// Copies the back buffer into memory: resolved first if multisampled, then through a surface in system memory. Only 32-bit formats.
-static std::unique_ptr<ScreenshotImage> CopyBackBuffer(IDirect3DSurface9* surface) {
+static std::unique_ptr<ScreenshotJob> CopyBackBuffer(IDirect3DSurface9* surface, const char* file) {
     D3DSURFACE_DESC desc;
     IDirect3DDevice9* device = nullptr;
     if (FAILED(surface->GetDesc(&desc)) || (desc.Format != D3DFMT_X8R8G8B8 && desc.Format != D3DFMT_A8R8G8B8)
@@ -162,7 +254,7 @@ static std::unique_ptr<ScreenshotImage> CopyBackBuffer(IDirect3DSurface9* surfac
     IDirect3DSurface9* resolved = nullptr;
     IDirect3DSurface9* copy = nullptr;
     IDirect3DSurface9* source = surface;
-    std::unique_ptr<ScreenshotImage> image;
+    std::unique_ptr<ScreenshotJob> job;
     bool ok = true;
     if (desc.MultiSampleType != D3DMULTISAMPLE_NONE) {
         ok = SUCCEEDED(device->CreateRenderTarget(desc.Width, desc.Height, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &resolved, nullptr))
@@ -173,9 +265,9 @@ static std::unique_ptr<ScreenshotImage> CopyBackBuffer(IDirect3DSurface9* surfac
     ok = ok && SUCCEEDED(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, &copy, nullptr))
         && SUCCEEDED(device->GetRenderTargetData(source, copy)) && SUCCEEDED(copy->LockRect(&locked, nullptr, D3DLOCK_READONLY));
     if (ok) {
-        image.reset(new ScreenshotImage{ desc.Width, desc.Height, std::vector<BYTE>((size_t)desc.Width * desc.Height * 4) });
+        job.reset(new ScreenshotJob{ file, desc.Width, desc.Height, std::vector<BYTE>((size_t)desc.Width * desc.Height * 4) });
         for (UINT row = 0; row < desc.Height; row++) {
-            memcpy(image->pixels.data() + (size_t)row * desc.Width * 4, (const BYTE*)locked.pBits + (size_t)row * locked.Pitch, desc.Width * 4);
+            memcpy(job->pixels.data() + (size_t)row * desc.Width * 4, (const BYTE*)locked.pBits + (size_t)row * locked.Pitch, desc.Width * 4);
         }
         copy->UnlockRect();
     }
@@ -186,43 +278,37 @@ static std::unique_ptr<ScreenshotImage> CopyBackBuffer(IDirect3DSurface9* surfac
         resolved->Release();
     }
     device->Release();
-    return image;
+    return job;
 }
 
 static HRESULT WINAPI zzSaveSurface(const char* file, int format, IDirect3DSurface9* surface, const PALETTEENTRY* palette, const RECT* rect) {
-    if (!s_screenshotFile || !file || strcmp(file, s_screenshotFile) != 0 || format != D3DXIFF_JPG || palette || rect || !surface) {
+    if (!s_ownName || format != D3DXIFF_JPG || palette || rect || !surface || !file) {
         return real_SaveSurface(file, format, surface, palette, rect);
     }
+    std::unique_ptr<ScreenshotJob> job = CopyBackBuffer(surface, file);
+    if (job) {
+        job->clipboard = s_copyNext;
+        s_copyNext = false;
+    }
+    HANDLE thread = job ? CreateThread(nullptr, 0, WriteScreenshot, job.get(), 0, nullptr) : nullptr;
+    if (thread) {
+        (void)job.release(); // the thread owns it now
+    } else {
+        job.reset();
+        s_copyNext = false;
+        ModsLog("screenshot: %s saved in the frame, the image could not be copied", file);
+        return real_SaveSurface(file, format, surface, palette, rect);
+    }
+    CloseHandle(thread);
+    return S_OK;
+}
 
-    char suffix[40];
-    sprintf_s(suffix, ".%lu.%lu.part", GetCurrentProcessId(), GetCurrentThreadId());
-    std::string temporary = std::string(file) + suffix;
-    std::unique_ptr<ScreenshotImage> image = CopyBackBuffer(surface);
-    bool encoded = false;
-    if (image) {
-        HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        if (SUCCEEDED(com) || com == RPC_E_CHANGED_MODE) {
-            encoded = WriteJpeg(*image, temporary);
-        }
-        if (SUCCEEDED(com)) {
-            CoUninitialize();
-        }
+bool CopyNextScreenshot() {
+    if (!real_Screenshot || !real_SaveSurface) {
+        return false;
     }
-    HRESULT result = S_OK;
-    if (!encoded) {
-        DeleteFileA(temporary.c_str());
-        result = real_SaveSurface(temporary.c_str(), format, surface, palette, rect);
-    }
-
-    // Another client can finish a screenshot under the same name first. The renderer reports this exact name, so keep the existing file.
-    if (SUCCEEDED(result) && !MoveFileExA(temporary.c_str(), file, 0)) {
-        result = HRESULT_FROM_WIN32(GetLastError());
-    }
-    if (FAILED(result)) {
-        DeleteFileA(temporary.c_str());
-        ModsLog("screenshot: %s could not be saved (0x%08lX)", file, (unsigned long)result);
-    }
-    return result;
+    s_copyNext = true;
+    return true;
 }
 
 namespace {
